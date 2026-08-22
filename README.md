@@ -30,14 +30,20 @@ Cockpit 是 `llm-wiki-*` CLI 的**薄壳**，不重实现记忆逻辑：
   `execFile`（不经 shell），从根上杜绝命令注入。
 - **路径囚笼**：MD 只读端点把路径 resolve 后必须仍在 `~/llm-wiki` 内，且拒绝 `secure-notes`、
   点目录、非 `.md`。
-- **写操作白名单**：唯一可写文件是 `wiki/context/open-loops.md`，路径在服务端硬编码，
-  **不接受调用方传路径**；写前自动备份到 `.open-loops.bak`。
+- **写操作范围受限**，共三处，每处都有独立边界：
+  - `wiki/context/open-loops.md` —— 路径服务端硬编码，**不接受调用方传路径**
+  - `raw/**.md` 的 frontmatter `status` —— 路径必须 resolve 在 `raw/` 内，**正文一律不动**，
+    status 只接受 `compiled|archived|rejected`
+  - `memory/events/*.jsonl` 的 `lifecycle` —— 只把命中 id 的那一行标 `deprecated`，
+    其余行原样写回；**从不删除**
+  - 三者写前都自动备份（`.bak`）。
 - **乐观锁**：勾选按「行号 + 该行当前文本」双重校验，文本不符则拒绝（409），
   避免并发编辑时改错行。
 - **不碰 secret**：不读 `~/secure-notes`；沿用 CLI 自身的脱敏。
 
-上述边界由 `tests/test-server.sh` 锁定（14 项：路径逃逸、非 md、注入型 id、乐观锁冲突、
-未知分组、空内容/含换行、以及「传 path 参数也无法影响白名单外文件」）。
+上述边界由 `tests/test-server.sh` 锁定（19 项：路径逃逸、非 md、注入型 id、乐观锁冲突、
+未知分组、空内容/含换行、非法 status、raw 外路径、event 只改命中行、未知 event id、
+以及「传 path 参数也无法影响白名单外文件」）。
 
 ## 用法
 
@@ -58,9 +64,16 @@ bun run dev:web         # 终端 2：Vite :4176（代理 /api 到后端）
 
 ## 三个视图
 
-1. **复盘** — 四个可折叠板块，按「有货优先」排序：待处理 corrections（一键晋升/丢弃）、
-   未编译 raw（可全量展开，点条目直接跳到阅读视图）、晋升建议、event 过期候选。
+1. **复盘** — 四个可折叠板块，按「有货优先」排序，每类都能直接处理掉：
+   - **corrections**：晋升 / 丢弃
+   - **未编译 raw**：查看 / 已编译 / 归档 / 不要 —— 写 frontmatter `status`，写完即从列表消失
+   - **晋升建议**：来自 promote-notes 的分类打分
+   - **event 过期候选**：废弃（标 `lifecycle: deprecated` 停止召回，**不删除**，保留审计痕迹）
+
    空板块自动折叠并淡化。顶栏显示「距上次复盘 N 天」。
+
+   > 编译成 wiki 知识页仍需 AI 写作（读源材料 → 提炼 → 决定进哪页），app 负责的是
+   > **把处理结果落到文件**：你判断完点一下，raw 就不再占着复盘队列。
 2. **GTD** — 读 `open-loops.md`，**保留原文嵌套层级**（子项缩进显示）：
    - 勾选复选框即写回文件（`- 内容` ⇄ `- ✅ 内容`），写前自动备份
    - 每个 `##` 分组可「+ 加一条」，追加到该组末尾

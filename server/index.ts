@@ -174,6 +174,98 @@ async function handleToggleLoop(req: Request): Promise<Response> {
   return jsonResponse({ ok: true, line, text: lines[line], done: !marked });
 }
 
+const RAW_STATUSES = new Set(["compiled", "archived", "rejected"]);
+
+/**
+ * 只改 raw/ 下 md 的 frontmatter status，正文一律不动。
+ * 路径必须 resolve 在 WIKI_ROOT/raw 内（与只读端点同一套囚笼逻辑，额外收紧到 raw/）。
+ */
+async function handleRawStatus(req: Request): Promise<Response> {
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return errorResponse("请求体不是合法 JSON");
+  }
+  const { path: rel, status } = (body ?? {}) as { path?: unknown; status?: unknown };
+  if (typeof status !== "string" || !RAW_STATUSES.has(status)) {
+    return errorResponse(`status 必须是 ${[...RAW_STATUSES].join(" / ")}`);
+  }
+  const abs = safeWikiPath(typeof rel === "string" ? rel : "");
+  const rawDir = join(WIKI_ROOT, "raw");
+  if (!abs || (abs !== rawDir && !abs.startsWith(rawDir + sep))) {
+    return errorResponse("只能修改 raw/ 下的 md", 403);
+  }
+  if (!existsSync(abs)) return errorResponse("文件不存在", 404);
+
+  const original = await readFile(abs, "utf-8");
+  await writeFile(`${abs}.bak`, original, "utf-8");
+
+  let updated: string;
+  if (original.startsWith("---\n")) {
+    const end = original.indexOf("\n---\n", 4);
+    if (end === -1) return errorResponse("frontmatter 未闭合，拒绝改写", 409);
+    const fm = original.slice(4, end);
+    const rest = original.slice(end + 5);
+    const lines = fm.split("\n");
+    const idx = lines.findIndex((l) => /^status\s*:/i.test(l));
+    if (idx >= 0) lines[idx] = `status: ${status}`;
+    else lines.push(`status: ${status}`);
+    updated = `---\n${lines.join("\n")}\n---\n${rest}`;
+  } else {
+    updated = `---\nstatus: ${status}\n---\n\n${original}`;
+  }
+  await writeFile(abs, updated, "utf-8");
+  return jsonResponse({ ok: true, path: rel, status });
+}
+
+/**
+ * 把某条 event 的 lifecycle 标为 deprecated —— 不删除、不改摘要，保留审计痕迹。
+ * 逐行重写 JSONL：只有 id 命中的那行被替换，其余原样写回。
+ */
+async function handleDeprecateEvent(req: Request): Promise<Response> {
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return errorResponse("请求体不是合法 JSON");
+  }
+  const { id } = (body ?? {}) as { id?: unknown };
+  if (typeof id !== "string" || !/^[0-9a-f]{8,32}$/.test(id)) {
+    return errorResponse("非法 event id");
+  }
+
+  const eventsDir = join(WIKI_ROOT, "memory", "events");
+  if (!existsSync(eventsDir)) return errorResponse("events 目录不存在", 404);
+  const files = (await readdir(eventsDir)).filter((f) => f.endsWith(".jsonl"));
+
+  for (const f of files) {
+    const abs = join(eventsDir, f);
+    const text = await readFile(abs, "utf-8");
+    const lines = text.split("\n");
+    let hit = false;
+    const out = lines.map((line) => {
+      if (!line.trim() || hit) return line;
+      try {
+        const row = JSON.parse(line) as Record<string, unknown>;
+        if (row["id"] !== id) return line;
+        hit = true;
+        row["lifecycle"] = "deprecated";
+        row["deprecated_at"] = new Date().toISOString();
+        return JSON.stringify(row);
+      } catch {
+        return line;
+      }
+    });
+    if (hit) {
+      await writeFile(`${abs}.bak`, text, "utf-8");
+      await writeFile(abs, out.join("\n"), "utf-8");
+      return jsonResponse({ ok: true, id, file: f });
+    }
+  }
+  return errorResponse("未找到该 event", 404);
+}
+
 async function handleAddLoop(req: Request): Promise<Response> {
   let body: unknown;
   try {
@@ -297,6 +389,8 @@ const server = Bun.serve({
       if (pathname === "/api/open-loops" && req.method === "GET") return handleOpenLoops();
       if (pathname === "/api/open-loops/toggle" && req.method === "POST") return handleToggleLoop(req);
       if (pathname === "/api/open-loops/add" && req.method === "POST") return handleAddLoop(req);
+      if (pathname === "/api/raw/status" && req.method === "POST") return handleRawStatus(req);
+      if (pathname === "/api/events/deprecate" && req.method === "POST") return handleDeprecateEvent(req);
       if (pathname === "/api/page" && req.method === "GET") return handlePage(url);
       if (pathname === "/api/tree" && req.method === "GET") return handleTree();
       return errorResponse("未知 API", 404);

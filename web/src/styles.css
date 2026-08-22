@@ -382,6 +382,21 @@ button.act:disabled {
   background: #232833;
 }
 
+.sub.link {
+  cursor: pointer;
+  color: var(--accent);
+}
+
+.sub.link:hover {
+  text-decoration: underline;
+}
+
+.act-note {
+  align-self: center;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
 button.act.more {
   margin-top: 4px;
   color: var(--accent);

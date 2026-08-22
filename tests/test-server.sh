@@ -13,6 +13,13 @@ printf '# index\n[[llm-wiki]]\n' >"$ROOT/wiki/index.md"
 printf '# secret page\n' >"$ROOT/wiki/context/CRITICAL_FACTS.md"
 printf '# Open Loops\n## 组A\n- 待办一\n- ✅ 已完成\n' >"$ROOT/wiki/context/open-loops.md"
 
+cat >"$ROOT/memory/events/2020-01.jsonl" <<'EOF'
+{"schema_version":"llm-wiki-memory-event/v2","id":"aaaaaaaaaaaaaaaa","timestamp":"2020-01-01T00:00:00+00:00","type":"fact","project":"old","summary":"very old fact","confidence":0.7,"half_life_days":90,"lifecycle":"active","valid_from":"2020-01-01T00:00:00+00:00"}
+EOF
+cat >"$ROOT/memory/events/2999-01.jsonl" <<'EOF'
+{"schema_version":"llm-wiki-memory-event/v2","id":"bbbbbbbbbbbbbbbb","timestamp":"2999-01-01T00:00:00+00:00","type":"fact","project":"new","summary":"fresh fact","confidence":0.7,"half_life_days":90,"lifecycle":"active","valid_from":"2999-01-01T00:00:00+00:00"}
+EOF
+
 PORT=4199
 COCKPIT_PORT="$PORT" LLM_WIKI_ROOT="$ROOT" bun run "$REPO/server/index.ts" >"$WORK/server.log" 2>&1 &
 SRV=$!
@@ -92,6 +99,51 @@ NL=$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:$PORT/api/
   -H 'content-type: application/json' -d '{"group":"组A","text":"a\nb"}')
 [ "$EMPTY" = "400" ] && [ "$NL" = "400" ] \
   && pass "空内容与含换行被拒 400" || fail "invalid text not rejected ($EMPTY/$NL)"
+
+# 13a. raw status 写入 frontmatter
+mkdir -p "$ROOT/raw/notes"
+printf -- '---\ntitle: t\nstatus: captured\n---\n正文\n' >"$ROOT/raw/notes/a.md"
+curl -sf -X POST "http://127.0.0.1:$PORT/api/raw/status" \
+  -H 'content-type: application/json' -d '{"path":"raw/notes/a.md","status":"compiled"}' >/dev/null \
+  && grep -q '^status: compiled$' "$ROOT/raw/notes/a.md" \
+  && grep -q '^正文$' "$ROOT/raw/notes/a.md" \
+  && pass "raw status 改写且正文保留" || fail "raw status write"
+
+# 13b. 无 frontmatter 的 raw 也能加上
+printf '裸正文\n' >"$ROOT/raw/notes/b.md"
+curl -sf -X POST "http://127.0.0.1:$PORT/api/raw/status" \
+  -H 'content-type: application/json' -d '{"path":"raw/notes/b.md","status":"archived"}' >/dev/null \
+  && head -1 "$ROOT/raw/notes/b.md" | grep -q -- '---' \
+  && grep -q '^裸正文$' "$ROOT/raw/notes/b.md" \
+  && pass "无 frontmatter 的 raw 补齐 status" || fail "raw status insert"
+
+# 13c. 非法 status 与 raw/ 外路径必须拒绝
+BADST=$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:$PORT/api/raw/status" \
+  -H 'content-type: application/json' -d '{"path":"raw/notes/a.md","status":"whatever"}')
+OUTRAW=$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:$PORT/api/raw/status" \
+  -H 'content-type: application/json' -d '{"path":"wiki/index.md","status":"compiled"}')
+[ "$BADST" = "400" ] && [ "$OUTRAW" = "403" ] \
+  && pass "非法 status 400 / raw 外路径 403" || fail "raw status guards ($BADST/$OUTRAW)"
+
+# 13d. event deprecate 只改命中行，其余行不动
+curl -sf -X POST "http://127.0.0.1:$PORT/api/events/deprecate" \
+  -H 'content-type: application/json' -d '{"id":"aaaaaaaaaaaaaaaa"}' >/dev/null || fail "deprecate request"
+cat >"$WORK/check_dep.py" <<'PYEOF'
+import json, sys, pathlib
+root = pathlib.Path(sys.argv[1])
+old = json.loads((root / "memory/events/2020-01.jsonl").read_text().strip())
+assert old["lifecycle"] == "deprecated", old
+assert "deprecated_at" in old
+fresh = json.loads((root / "memory/events/2999-01.jsonl").read_text().strip())
+assert fresh["lifecycle"] == "active", fresh
+PYEOF
+python3 "$WORK/check_dep.py" "$ROOT" \
+  && pass "event deprecate 只影响目标行" || fail "event deprecate assertions"
+
+# 13e. 不存在的 event id 必须 404
+NOEV=$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:$PORT/api/events/deprecate" \
+  -H 'content-type: application/json' -d '{"id":"deadbeefdeadbeef"}')
+[ "$NOEV" = "404" ] && pass "未知 event id 被拒 404" || fail "unknown event not rejected ($NOEV)"
 
 # 13. 写操作不能触及 open-loops 之外的文件（无路径参数可传）
 BEFORE=$(md5sum "$ROOT/wiki/context/CRITICAL_FACTS.md" | cut -d' ' -f1)

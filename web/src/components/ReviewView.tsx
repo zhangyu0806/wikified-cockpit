@@ -42,6 +42,12 @@ function Section({ title, count, hint, children, defaultOpen = true }: SectionPr
   );
 }
 
+const RAW_ACTION_LABEL: Record<string, string> = {
+  compiled: "已编译",
+  archived: "归档",
+  rejected: "不要",
+};
+
 export function ReviewView({ report, onResolved, onToast, onOpenPage }: Props) {
   const [busy, setBusy] = useState<string | null>(null);
   const [rawLimit, setRawLimit] = useState(12);
@@ -52,6 +58,32 @@ export function ReviewView({ report, onResolved, onToast, onOpenPage }: Props) {
     try {
       const r = await api.resolveCorrection(id, status);
       onToast(r.message || `已${status === "promoted" ? "晋升" : "丢弃"} ${id}`);
+      onResolved();
+    } catch (e) {
+      onToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function markRaw(path: string, status: "compiled" | "archived" | "rejected") {
+    setBusy(path);
+    try {
+      await api.setRawStatus(`raw/${path}`, status);
+      onToast(`已标记「${RAW_ACTION_LABEL[status]}」：${path.split("/").pop()}`);
+      onResolved();
+    } catch (e) {
+      onToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function deprecateEvent(id: string) {
+    setBusy(id);
+    try {
+      await api.deprecateEvent(id);
+      onToast(`已废弃 event ${id}（保留记录，不删除）`);
       onResolved();
     } catch (e) {
       onToast(e instanceof Error ? e.message : String(e), true);
@@ -106,12 +138,36 @@ export function ReviewView({ report, onResolved, onToast, onOpenPage }: Props) {
         ) : (
           <>
             {raw.slice(0, rawLimit).map((r) => (
-              <div className="card clickable" key={r.path} onClick={() => onOpenPage(`raw/${r.path}`)}>
+              <div className="card" key={r.path}>
                 <div className="card-head">
                   <span className="badge">{r.category}</span>
                   <span className="age">{ageText(r.age_days)}</span>
                 </div>
-                <div className="sub">{r.path}</div>
+                <div className="sub link" onClick={() => onOpenPage(`raw/${r.path}`)}>
+                  {r.path}
+                </div>
+                <div className="actions">
+                  <button className="act" disabled={busy === r.path} onClick={() => onOpenPage(`raw/${r.path}`)}>
+                    查看
+                  </button>
+                  <button
+                    className="act promote"
+                    disabled={busy === r.path}
+                    onClick={() => markRaw(r.path, "compiled")}
+                  >
+                    已编译
+                  </button>
+                  <button className="act" disabled={busy === r.path} onClick={() => markRaw(r.path, "archived")}>
+                    归档
+                  </button>
+                  <button
+                    className="act reject"
+                    disabled={busy === r.path}
+                    onClick={() => markRaw(r.path, "rejected")}
+                  >
+                    不要
+                  </button>
+                </div>
               </div>
             ))}
             {rawLimit < raw.length && (
@@ -175,6 +231,12 @@ export function ReviewView({ report, onResolved, onToast, onOpenPage }: Props) {
                   </span>
                 </div>
                 <div className="text">{e.summary}</div>
+                <div className="actions">
+                  <button className="act reject" disabled={busy === e.id} onClick={() => deprecateEvent(e.id)}>
+                    废弃
+                  </button>
+                  <span className="act-note">不删除，只标 deprecated 停止召回</span>
+                </div>
               </div>
             ))}
             {expLimit < exp.length && (
