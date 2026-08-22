@@ -1,0 +1,28 @@
+{
+  "name": "wikified-cockpit",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "本机复盘 + GTD 驾驶舱 for Wikified —— CLI 的薄壳,不重实现逻辑。Obsidian 管深度阅读,本 app 管行动。",
+  "scripts": {
+    "dev:web": "vite",
+    "build": "vite build",
+    "server": "bun run server/index.ts",
+    "start": "bun run server/index.ts",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p web/tsconfig.json"
+  },
+  "dependencies": {
+    "markdown-it": "^14.1.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/markdown-it": "^14.1.2",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "bun-types": "^1.4.0",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7"
+  }
+}
