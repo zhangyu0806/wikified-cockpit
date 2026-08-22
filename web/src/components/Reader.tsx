@@ -108,8 +108,9 @@ export function Reader({ initialPath, onNavigate }: Props) {
           ))}
       </nav>
       <div className="markdown" onClick={onContentClick}>
+        {path && <div className="crumb">{path}</div>}
         {err && <div className="error">{err}</div>}
-        {!path && <p className="empty">从左侧选一页，或在复盘/GTD 里点开链接。</p>}
+        {!path && <p className="empty">从左侧选一页，或在复盘里点条目跳过来。</p>}
         {path && !err && <div dangerouslySetInnerHTML={{ __html: html }} />}
       </div>
     </div>

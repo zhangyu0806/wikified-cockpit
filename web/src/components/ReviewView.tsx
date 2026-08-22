@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { api, type ReviewReport } from "../api/client";
 
 interface Props {
@@ -14,14 +14,44 @@ function ageText(days: number | null): string {
   return `${Math.floor(days)}天前`;
 }
 
+interface SectionProps {
+  title: string;
+  count: number;
+  hint?: string;
+  children: ReactNode;
+  defaultOpen?: boolean;
+}
+
+function Section({ title, count, hint, children, defaultOpen = true }: SectionProps) {
+  const [open, setOpen] = useState(defaultOpen && count > 0);
+  return (
+    <section className={`panel ${count === 0 ? "muted" : ""}`}>
+      <button className="section-head" onClick={() => setOpen((v) => !v)}>
+        <span className="caret">{open ? "▾" : "▸"}</span>
+        <h2>
+          {title} <span className="count">{count}</span>
+        </h2>
+      </button>
+      {open && (
+        <>
+          {hint && <p className="hint">{hint}</p>}
+          {children}
+        </>
+      )}
+    </section>
+  );
+}
+
 export function ReviewView({ report, onResolved, onToast, onOpenPage }: Props) {
   const [busy, setBusy] = useState<string | null>(null);
+  const [rawLimit, setRawLimit] = useState(12);
+  const [expLimit, setExpLimit] = useState(10);
 
   async function resolve(id: string, status: "promoted" | "rejected") {
     setBusy(id);
     try {
       const r = await api.resolveCorrection(id, status);
-      onToast(r.message || `已${status === "promoted" ? "晋升" : "拒绝"} ${id}`);
+      onToast(r.message || `已${status === "promoted" ? "晋升" : "丢弃"} ${id}`);
       onResolved();
     } catch (e) {
       onToast(e instanceof Error ? e.message : String(e), true);
@@ -37,13 +67,13 @@ export function ReviewView({ report, onResolved, onToast, onOpenPage }: Props) {
 
   return (
     <>
-      <section className="panel">
-        <h2>
-          待处理的纠正 / 偏好 <span className="count">{corr.length} 条 · 最高优先级</span>
-        </h2>
-        <p className="hint">你纠正过 AI 或表达过偏好，但还没进 CRITICAL_FACTS，AI 可能还在犯。</p>
+      <Section
+        title="待处理的纠正 / 偏好"
+        count={corr.length}
+        hint="你纠正过 AI 或表达过偏好，但还没进 CRITICAL_FACTS，AI 可能还在犯。"
+      >
         {corr.length === 0 ? (
-          <p className="empty">队列为空。</p>
+          <p className="empty">队列已清空。</p>
         ) : (
           corr.map((c) => (
             <div className="card" key={c.id}>
@@ -54,32 +84,53 @@ export function ReviewView({ report, onResolved, onToast, onOpenPage }: Props) {
               </div>
               <div className="text">{c.text}</div>
               <div className="actions">
-                <button
-                  className="act promote"
-                  disabled={busy === c.id}
-                  onClick={() => resolve(c.id, "promoted")}
-                >
+                <button className="act promote" disabled={busy === c.id} onClick={() => resolve(c.id, "promoted")}>
                   晋升
                 </button>
-                <button
-                  className="act reject"
-                  disabled={busy === c.id}
-                  onClick={() => resolve(c.id, "rejected")}
-                >
+                <button className="act reject" disabled={busy === c.id} onClick={() => resolve(c.id, "rejected")}>
                   丢弃
                 </button>
               </div>
             </div>
           ))
         )}
-      </section>
+      </Section>
 
-      <section className="panel">
-        <h2>
-          晋升建议 <span className="count">{promo.length} 条 quick-note / auto-draft</span>
-        </h2>
+      <Section
+        title="未编译的源材料"
+        count={raw.length}
+        hint="raw/ 里还没编译进 wiki、也没标 status: compiled 的文件。点条目可直接打开查看。"
+      >
+        {raw.length === 0 ? (
+          <p className="empty">全部已编译或归档。</p>
+        ) : (
+          <>
+            {raw.slice(0, rawLimit).map((r) => (
+              <div className="card clickable" key={r.path} onClick={() => onOpenPage(r.path)}>
+                <div className="card-head">
+                  <span className="badge">{r.category}</span>
+                  <span className="age">{ageText(r.age_days)}</span>
+                </div>
+                <div className="sub">{r.path}</div>
+              </div>
+            ))}
+            {rawLimit < raw.length && (
+              <button className="act more" onClick={() => setRawLimit(raw.length)}>
+                展开剩余 {raw.length - rawLimit} 个
+              </button>
+            )}
+            {rawLimit >= raw.length && raw.length > 12 && (
+              <button className="act more" onClick={() => setRawLimit(12)}>
+                收起
+              </button>
+            )}
+          </>
+        )}
+      </Section>
+
+      <Section title="晋升建议" count={promo.length} hint="promote-notes 对 quick-note / auto-draft 的分类打分。">
         {promo.length === 0 ? (
-          <p className="empty">无。</p>
+          <p className="empty">无建议。跑 llm-wiki-govern --force 可刷新。</p>
         ) : (
           promo.map((p, i) => (
             <div className="card" key={i}>
@@ -92,32 +143,14 @@ export function ReviewView({ report, onResolved, onToast, onOpenPage }: Props) {
             </div>
           ))
         )}
-      </section>
+      </Section>
 
-      <section className="panel">
-        <h2>
-          未编译的源材料 <span className="count">{raw.length} 个 raw 文件</span>
-        </h2>
-        {raw.length === 0 ? (
-          <p className="empty">全部已编译或归档。</p>
-        ) : (
-          raw.slice(0, 12).map((r) => (
-            <div className="card" key={r.path}>
-              <div className="card-head">
-                <span className="badge">{r.category}</span>
-                <span className="age">{ageText(r.age_days)}</span>
-              </div>
-              <div className="sub">{r.path}</div>
-            </div>
-          ))
-        )}
-        {raw.length > 12 && <p className="empty">…还有 {raw.length - 12} 个</p>}
-      </section>
-
-      <section className="panel">
-        <h2>
-          Event 堆积与过期候选 <span className="count">共 {report.event_total} 条</span>
-        </h2>
+      <Section
+        title="Event 过期候选"
+        count={exp.length}
+        hint={`共 ${report.event_total} 条 event。已过 ≥2 个半衰期（置信衰减到 1/4 以下）的列为候选。`}
+        defaultOpen={false}
+      >
         <div className="event-months">
           {Object.entries(report.event_counts)
             .sort()
@@ -128,23 +161,30 @@ export function ReviewView({ report, onResolved, onToast, onOpenPage }: Props) {
             ))}
         </div>
         {exp.length === 0 ? (
-          <p className="empty">无明显陈旧 event（默认判据保守：已过 2 个半衰期才列出）。</p>
+          <p className="empty">无明显陈旧 event。</p>
         ) : (
-          exp.slice(0, 15).map((e) => (
-            <div className="card" key={e.id}>
-              <div className="card-head">
-                <span className="badge">{e.id}</span>
-                <span className="badge kind">{e.type}</span>
-                {e.project && <span className="badge kind">{e.project}</span>}
-                <span className="age">
-                  {ageText(e.age_days)} · 置信→{e.decayed_confidence}
-                </span>
+          <>
+            {exp.slice(0, expLimit).map((e) => (
+              <div className="card" key={e.id}>
+                <div className="card-head">
+                  <span className="badge">{e.id}</span>
+                  <span className="badge kind">{e.type}</span>
+                  {e.project && <span className="badge kind">{e.project}</span>}
+                  <span className="age">
+                    {ageText(e.age_days)} · 置信→{e.decayed_confidence}
+                  </span>
+                </div>
+                <div className="text">{e.summary}</div>
               </div>
-              <div className="text">{e.summary}</div>
-            </div>
-          ))
+            ))}
+            {expLimit < exp.length && (
+              <button className="act more" onClick={() => setExpLimit(exp.length)}>
+                展开剩余 {exp.length - expLimit} 条
+              </button>
+            )}
+          </>
         )}
-      </section>
+      </Section>
     </>
   );
 }

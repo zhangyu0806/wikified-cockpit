@@ -343,6 +343,162 @@ button.act:disabled {
   border-bottom-color: var(--red);
 }
 
+.section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.section-head .caret {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+.section-head h2 {
+  margin: 0;
+}
+
+.panel.muted {
+  opacity: 0.62;
+}
+
+.panel.muted .count {
+  color: var(--text-faint);
+}
+
+.card.clickable {
+  cursor: pointer;
+}
+
+.card.clickable:hover {
+  border-color: var(--accent-dim);
+  background: #232833;
+}
+
+button.act.more {
+  margin-top: 4px;
+  color: var(--accent);
+  border-color: var(--accent-dim);
+}
+
+.gtd-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.gtd-head .hint {
+  margin-bottom: 0;
+}
+
+.toggle-done {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-dim);
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.loop-group h3 {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 14px;
+  margin: 0 0 10px;
+}
+
+.loop-group h3 .count {
+  color: var(--text-faint);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.loop-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.loop-row:hover {
+  background: var(--bg-elev);
+}
+
+.loop-row input[type="checkbox"] {
+  margin: 3px 0 0;
+  flex: none;
+  cursor: pointer;
+}
+
+.loop-row.depth-1 {
+  padding-left: 30px;
+}
+.loop-row.depth-2 {
+  padding-left: 52px;
+}
+.loop-row.depth-3 {
+  padding-left: 74px;
+}
+
+.loop-row.depth-1 .loop-text,
+.loop-row.depth-2 .loop-text,
+.loop-row.depth-3 .loop-text {
+  color: var(--text-dim);
+}
+
+.loop-row.done .loop-text {
+  color: var(--text-faint);
+  text-decoration: line-through;
+}
+
+.add-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.add-row input {
+  flex: 1;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.add-row input:focus {
+  outline: none;
+  border-color: var(--accent-dim);
+}
+
+button.act.add-btn {
+  margin-top: 8px;
+  color: var(--text-dim);
+  border-style: dashed;
+}
+
+.crumb {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-faint);
+  margin-bottom: 12px;
+  word-break: break-all;
+}
+
 .toast {
   position: fixed;
   bottom: 24px;

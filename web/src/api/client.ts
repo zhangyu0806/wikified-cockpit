@@ -75,6 +75,17 @@ async function postResolveCorrection(
   return body as ResolveResult;
 }
 
+async function postJson<T>(url: string, payload: unknown): Promise<T> {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const body = await res.json().catch(() => ({ error: res.statusText }));
+  if (!res.ok) throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+  return body as T;
+}
+
 export const api = {
   review: () => getJson<ReviewReport>("/api/review"),
   openLoops: () => getJson<{ exists: boolean; content: string }>("/api/open-loops"),
@@ -82,4 +93,11 @@ export const api = {
     getJson<{ path: string; content: string }>(`/api/page?path=${encodeURIComponent(path)}`),
   tree: () => getJson<{ pages: string[] }>("/api/tree"),
   resolveCorrection: postResolveCorrection,
+  toggleLoop: (line: number, expect: string) =>
+    postJson<{ ok: boolean; line: number; text: string; done: boolean }>(
+      "/api/open-loops/toggle",
+      { line, expect },
+    ),
+  addLoop: (group: string, text: string) =>
+    postJson<{ ok: boolean; inserted_at: number }>("/api/open-loops/add", { group, text }),
 };

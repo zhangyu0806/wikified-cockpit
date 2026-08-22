@@ -15,7 +15,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { homedir } from "node:os";
 import { join, resolve, sep, extname } from "node:path";
-import { readFile, readdir, stat } from "node:fs/promises";
+import { readFile, readdir, stat, writeFile, copyFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 
 const execFileAsync = promisify(execFile);
@@ -115,12 +115,100 @@ async function handleResolve(req: Request): Promise<Response> {
   return jsonResponse({ ok: true, id, status: st, message: r.stdout.trim() });
 }
 
-/** GTD 看板数据源:直接读 open-loops.md 原文(前端负责解析成看板列)。 */
+function openLoopsPath(): string {
+  return join(WIKI_ROOT, "wiki", "context", "open-loops.md");
+}
+
 async function handleOpenLoops(): Promise<Response> {
-  const p = join(WIKI_ROOT, "wiki", "context", "open-loops.md");
+  const p = openLoopsPath();
   if (!existsSync(p)) return jsonResponse({ exists: false, content: "" });
   const content = await readFile(p, "utf-8");
   return jsonResponse({ exists: true, content });
+}
+
+/**
+ * open-loops.md 是唯一可写文件（白名单硬编码，不接受调用方传路径）。
+ * 每次写入前先备份到同目录 .open-loops.bak，配合 llm-wiki 自身的 git 兜底。
+ */
+async function writeOpenLoops(lines: string[]): Promise<void> {
+  const p = openLoopsPath();
+  if (existsSync(p)) {
+    await copyFile(p, join(WIKI_ROOT, "wiki", "context", ".open-loops.bak"));
+  }
+  await writeFile(p, lines.join("\n"), "utf-8");
+}
+
+const DONE_MARK_RE = /^(\s*[-*+]\s*)(?:✅|✓|☑|\[x\]|\[X\])\s*/;
+
+/**
+ * 勾选/取消勾选某一行。用「行号 + 该行当前文本」双重校验：
+ * 行号可能因并发编辑漂移，文本比对能在漂移时拒绝写入而不是改错行。
+ */
+async function handleToggleLoop(req: Request): Promise<Response> {
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return errorResponse("请求体不是合法 JSON");
+  }
+  const { line, expect } = (body ?? {}) as { line?: unknown; expect?: unknown };
+  if (typeof line !== "number" || !Number.isInteger(line) || line < 0) {
+    return errorResponse("非法行号");
+  }
+  if (typeof expect !== "string") return errorResponse("缺少 expect（该行当前文本）");
+
+  const p = openLoopsPath();
+  if (!existsSync(p)) return errorResponse("open-loops.md 不存在", 404);
+  const lines = (await readFile(p, "utf-8")).split("\n");
+  const target = lines[line];
+  if (target === undefined) return errorResponse("行号越界", 409);
+  if (target.trimEnd() !== expect.trimEnd()) {
+    return errorResponse("文件已变更（该行内容与预期不符），请刷新后重试", 409);
+  }
+
+  const marked = DONE_MARK_RE.exec(target);
+  lines[line] = marked
+    ? `${marked[1]}${target.slice(marked[0].length)}`
+    : target.replace(/^(\s*[-*+]\s*)/, "$1✅ ");
+  await writeOpenLoops(lines);
+  return jsonResponse({ ok: true, line, text: lines[line], done: !marked });
+}
+
+async function handleAddLoop(req: Request): Promise<Response> {
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return errorResponse("请求体不是合法 JSON");
+  }
+  const { group, text } = (body ?? {}) as { group?: unknown; text?: unknown };
+  if (typeof text !== "string" || !text.trim()) return errorResponse("待办内容不能为空");
+  if (text.includes("\n")) return errorResponse("待办内容不能含换行");
+  if (typeof group !== "string") return errorResponse("缺少分组名");
+
+  const p = openLoopsPath();
+  if (!existsSync(p)) return errorResponse("open-loops.md 不存在", 404);
+  const lines = (await readFile(p, "utf-8")).split("\n");
+
+  let insertAt = -1;
+  let inGroup = false;
+  for (let i = 0; i < lines.length; i += 1) {
+    const heading = /^##\s+(.*)/.exec(lines[i] ?? "");
+    if (heading) {
+      if (inGroup) {
+        insertAt = i;
+        break;
+      }
+      if ((heading[1] ?? "").trim() === group.trim()) inGroup = true;
+    }
+  }
+  if (!inGroup) return errorResponse(`未找到分组：${group}`, 404);
+  if (insertAt === -1) insertAt = lines.length;
+  while (insertAt > 0 && (lines[insertAt - 1] ?? "").trim() === "") insertAt -= 1;
+
+  lines.splice(insertAt, 0, `- ${text.trim()}`);
+  await writeOpenLoops(lines);
+  return jsonResponse({ ok: true, inserted_at: insertAt });
 }
 
 /** 只读单页 MD。 */
@@ -208,6 +296,8 @@ const server = Bun.serve({
       if (pathname === "/api/review" && req.method === "GET") return handleReview();
       if (pathname === "/api/corrections/resolve" && req.method === "POST") return handleResolve(req);
       if (pathname === "/api/open-loops" && req.method === "GET") return handleOpenLoops();
+      if (pathname === "/api/open-loops/toggle" && req.method === "POST") return handleToggleLoop(req);
+      if (pathname === "/api/open-loops/add" && req.method === "POST") return handleAddLoop(req);
       if (pathname === "/api/page" && req.method === "GET") return handlePage(url);
       if (pathname === "/api/tree" && req.method === "GET") return handleTree();
       return errorResponse("未知 API", 404);

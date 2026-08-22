@@ -57,4 +57,49 @@ curl -sf "http://127.0.0.1:$PORT/api/open-loops" \
   | python3 -c 'import json,sys; assert json.load(sys.stdin)["exists"]' \
   && pass "open-loops 可读" || fail "open-loops"
 
+# 7. 勾选写回：'- 待办一' 在第 2 行（0-based）
+TOGGLE=$(curl -s -X POST "http://127.0.0.1:$PORT/api/open-loops/toggle" \
+  -H 'content-type: application/json' -d '{"line":2,"expect":"- 待办一"}')
+python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["ok"] and d["done"], d' <<<"$TOGGLE" \
+  && pass "勾选写回成功" || fail "toggle failed: $TOGGLE"
+grep -q '✅ 待办一' "$ROOT/wiki/context/open-loops.md" \
+  && pass "文件已写入完成标记" || fail "done mark not written"
+
+# 8. 写前备份存在
+[ -f "$ROOT/wiki/context/.open-loops.bak" ] \
+  && pass "写前自动备份生成" || fail "backup missing"
+
+# 9. 乐观锁：expect 与实际不符必须拒绝（409），不能改错行
+STALE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:$PORT/api/open-loops/toggle" \
+  -H 'content-type: application/json' -d '{"line":2,"expect":"- 完全不匹配的内容"}')
+[ "$STALE" = "409" ] && pass "内容不符时拒绝写入 409" || fail "stale write not rejected ($STALE)"
+
+# 10. 加项到指定分组
+curl -sf -X POST "http://127.0.0.1:$PORT/api/open-loops/add" \
+  -H 'content-type: application/json' -d '{"group":"组A","text":"新增待办"}' >/dev/null \
+  && grep -q '^- 新增待办$' "$ROOT/wiki/context/open-loops.md" \
+  && pass "加项写入正确分组" || fail "add failed"
+
+# 11. 不存在的分组必须拒绝
+NOGRP=$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:$PORT/api/open-loops/add" \
+  -H 'content-type: application/json' -d '{"group":"不存在的组","text":"x"}')
+[ "$NOGRP" = "404" ] && pass "未知分组被拒 404" || fail "unknown group not rejected ($NOGRP)"
+
+# 12. 空内容 / 含换行必须拒绝
+EMPTY=$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:$PORT/api/open-loops/add" \
+  -H 'content-type: application/json' -d '{"group":"组A","text":"   "}')
+NL=$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:$PORT/api/open-loops/add" \
+  -H 'content-type: application/json' -d '{"group":"组A","text":"a\nb"}')
+[ "$EMPTY" = "400" ] && [ "$NL" = "400" ] \
+  && pass "空内容与含换行被拒 400" || fail "invalid text not rejected ($EMPTY/$NL)"
+
+# 13. 写操作不能触及 open-loops 之外的文件（无路径参数可传）
+BEFORE=$(md5sum "$ROOT/wiki/context/CRITICAL_FACTS.md" | cut -d' ' -f1)
+curl -s -X POST "http://127.0.0.1:$PORT/api/open-loops/add" \
+  -H 'content-type: application/json' \
+  -d '{"group":"组A","text":"probe","path":"wiki/context/CRITICAL_FACTS.md"}' >/dev/null
+AFTER=$(md5sum "$ROOT/wiki/context/CRITICAL_FACTS.md" | cut -d' ' -f1)
+[ "$BEFORE" = "$AFTER" ] \
+  && pass "写操作无法影响白名单外文件" || fail "unrelated file was modified"
+
 printf '\n--- result: all cockpit server tests PASS ---\n'
