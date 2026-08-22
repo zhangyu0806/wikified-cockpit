@@ -174,6 +174,52 @@ async function handleToggleLoop(req: Request): Promise<Response> {
   return jsonResponse({ ok: true, line, text: lines[line], done: !marked });
 }
 
+const GTD_TAGS = ["next", "wait", "someday", "ref", "project"] as const;
+const GTD_TAG_RE = /@(next|wait|someday|ref|project)\b\s*/gi;
+
+/**
+ * 给某行打 GTD 类型标记（@next/@wait/@someday/@ref/@project）。
+ * 标记写在 bullet 正文开头，Obsidian 里照常可读，且不匹配注入侧的
+ * strip_next_actions / drop_done_lines 正则，所以召回行为完全不变。
+ * tag 传 null 表示清除分类。
+ */
+async function handleClassifyLoop(req: Request): Promise<Response> {
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return errorResponse("请求体不是合法 JSON");
+  }
+  const { line, expect, tag } = (body ?? {}) as { line?: unknown; expect?: unknown; tag?: unknown };
+  if (typeof line !== "number" || !Number.isInteger(line) || line < 0) {
+    return errorResponse("非法行号");
+  }
+  if (typeof expect !== "string") return errorResponse("缺少 expect（该行当前文本）");
+  if (tag !== null && (typeof tag !== "string" || !GTD_TAGS.includes(tag as (typeof GTD_TAGS)[number]))) {
+    return errorResponse(`tag 必须是 ${GTD_TAGS.join(" / ")} 或 null`);
+  }
+
+  const p = openLoopsPath();
+  if (!existsSync(p)) return errorResponse("open-loops.md 不存在", 404);
+  const lines = (await readFile(p, "utf-8")).split("\n");
+  const target = lines[line];
+  if (target === undefined) return errorResponse("行号越界", 409);
+  if (target.trimEnd() !== expect.trimEnd()) {
+    return errorResponse("文件已变更（该行内容与预期不符），请刷新后重试", 409);
+  }
+
+  const bullet = /^(\s*[-*+]\s*)([\s\S]*)$/.exec(target);
+  if (!bullet) return errorResponse("该行不是列表项", 409);
+  const prefix = bullet[1] ?? "";
+  const doneMark = /^((?:✅|✓|☑|\[x\]|\[X\])\s*)?/.exec(bullet[2] ?? "");
+  const done = doneMark?.[1] ?? "";
+  const bare = (bullet[2] ?? "").slice(done.length).replace(GTD_TAG_RE, "").trimStart();
+
+  lines[line] = tag === null ? `${prefix}${done}${bare}` : `${prefix}${done}@${tag} ${bare}`;
+  await writeOpenLoops(lines);
+  return jsonResponse({ ok: true, line, text: lines[line], tag });
+}
+
 const RAW_STATUSES = new Set(["compiled", "archived", "rejected"]);
 
 /**
@@ -399,6 +445,7 @@ try {
       if (pathname === "/api/open-loops" && req.method === "GET") return handleOpenLoops();
       if (pathname === "/api/open-loops/toggle" && req.method === "POST") return handleToggleLoop(req);
       if (pathname === "/api/open-loops/add" && req.method === "POST") return handleAddLoop(req);
+      if (pathname === "/api/open-loops/classify" && req.method === "POST") return handleClassifyLoop(req);
       if (pathname === "/api/raw/status" && req.method === "POST") return handleRawStatus(req);
       if (pathname === "/api/events/deprecate" && req.method === "POST") return handleDeprecateEvent(req);
       if (pathname === "/api/page" && req.method === "GET") return handlePage(url);

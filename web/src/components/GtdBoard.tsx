@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api } from "../api/client";
+import { api, type GtdTag } from "../api/client";
 
 interface Props {
   onToast: (msg: string, err?: boolean) => void;
@@ -11,41 +11,61 @@ interface LoopItem {
   text: string;
   depth: number;
   done: boolean;
-}
-
-interface LoopGroup {
-  title: string;
-  items: LoopItem[];
+  tag: GtdTag | null;
+  group: string;
 }
 
 const DONE_RE = /^\s*(?:[-*+]\s*)?(?:✅|✓|☑|\[x\]|\[X\]|~~)/;
+const TAG_RE = /@(next|wait|someday|ref|project)\b/i;
 
-function parse(md: string): LoopGroup[] {
-  const groups: LoopGroup[] = [];
-  let current: LoopGroup | null = null;
+interface Bucket {
+  tag: GtdTag;
+  label: string;
+  desc: string;
+  actionable: boolean;
+}
+
+const BUCKETS: Bucket[] = [
+  { tag: "next", label: "下一步行动", desc: "能立刻动手的单步任务", actionable: true },
+  { tag: "project", label: "项目", desc: "需要多步才能完成，得拆出下一步", actionable: true },
+  { tag: "wait", label: "等待中", desc: "已交出去/等外部结果，定期查", actionable: false },
+  { tag: "someday", label: "将来也许", desc: "现在不做，但不想忘", actionable: false },
+  { tag: "ref", label: "参考资料", desc: "不是任务，是备查信息", actionable: false },
+];
+
+const BUCKET_BY_TAG = new Map(BUCKETS.map((b) => [b.tag, b]));
+
+function parse(md: string): LoopItem[] {
+  const items: LoopItem[] = [];
+  let group = "";
   const lines = md.split("\n");
 
   for (let i = 0; i < lines.length; i += 1) {
     const raw = lines[i] ?? "";
     const heading = /^##\s+(.*)/.exec(raw);
     if (heading) {
-      current = { title: (heading[1] ?? "").trim(), items: [] };
-      groups.push(current);
+      group = (heading[1] ?? "").trim();
       continue;
     }
     const bullet = /^(\s*)[-*+]\s+(.*)/.exec(raw);
-    if (bullet && current) {
-      const indent = (bullet[1] ?? "").replace(/\t/g, "  ").length;
-      current.items.push({
-        line: i,
-        raw: raw.trimEnd(),
-        text: (bullet[2] ?? "").replace(/^(?:✅|✓|☑|\[x\]|\[X\])\s*/, ""),
-        depth: Math.min(3, Math.floor(indent / 2)),
-        done: DONE_RE.test(raw),
-      });
-    }
+    if (!bullet) continue;
+    const indent = (bullet[1] ?? "").replace(/\t/g, "  ").length;
+    const body = bullet[2] ?? "";
+    const tagMatch = TAG_RE.exec(body);
+    items.push({
+      line: i,
+      raw: raw.trimEnd(),
+      text: body
+        .replace(/^(?:✅|✓|☑|\[x\]|\[X\])\s*/, "")
+        .replace(TAG_RE, "")
+        .trim(),
+      depth: Math.min(3, Math.floor(indent / 2)),
+      done: DONE_RE.test(raw),
+      tag: tagMatch ? (tagMatch[1]?.toLowerCase() as GtdTag) : null,
+      group,
+    });
   }
-  return groups.filter((g) => g.items.length > 0);
+  return items;
 }
 
 function stripMd(text: string): string {
@@ -53,10 +73,10 @@ function stripMd(text: string): string {
 }
 
 export function GtdBoard({ onToast }: Props) {
-  const [groups, setGroups] = useState<LoopGroup[] | null>(null);
+  const [items, setItems] = useState<LoopItem[] | null>(null);
   const [exists, setExists] = useState(true);
   const [busy, setBusy] = useState<number | null>(null);
-  const [adding, setAdding] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState("");
   const [showDone, setShowDone] = useState(false);
 
@@ -64,7 +84,7 @@ export function GtdBoard({ onToast }: Props) {
     try {
       const r = await api.openLoops();
       setExists(r.exists);
-      setGroups(parse(r.content));
+      setItems(parse(r.content));
     } catch (e) {
       onToast(e instanceof Error ? e.message : String(e), true);
     }
@@ -74,11 +94,24 @@ export function GtdBoard({ onToast }: Props) {
     void load();
   }, [load]);
 
+  async function classify(item: LoopItem, tag: GtdTag | null) {
+    setBusy(item.line);
+    try {
+      await api.classifyLoop(item.line, item.raw, tag);
+      onToast(tag ? `归入「${BUCKET_BY_TAG.get(tag)?.label}」` : "已取消分类");
+      await load();
+    } catch (e) {
+      onToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function toggle(item: LoopItem) {
     setBusy(item.line);
     try {
       const r = await api.toggleLoop(item.line, item.raw);
-      onToast(r.done ? "已标记完成" : "已取消完成");
+      onToast(r.done ? "已完成" : "已取消完成");
       await load();
     } catch (e) {
       onToast(e instanceof Error ? e.message : String(e), true);
@@ -90,37 +123,41 @@ export function GtdBoard({ onToast }: Props) {
   async function submitAdd(group: string) {
     const text = draft.trim();
     if (!text) {
-      setAdding(null);
+      setAdding(false);
       return;
     }
     try {
       await api.addLoop(group, text);
-      onToast("已添加");
+      onToast("已捕获到收集箱，记得厘清它");
       setDraft("");
-      setAdding(null);
+      setAdding(false);
       await load();
     } catch (e) {
       onToast(e instanceof Error ? e.message : String(e), true);
     }
   }
 
-  if (!groups) return <div className="loading">加载中…</div>;
+  if (!items) return <div className="loading">加载中…</div>;
   if (!exists) return <div className="panel empty">open-loops.md 不存在。</div>;
 
-  const totalOpen = groups.reduce((n, g) => n + g.items.filter((i) => !i.done).length, 0);
-  const totalDone = groups.reduce((n, g) => n + g.items.filter((i) => i.done).length, 0);
+  const live = showDone ? items : items.filter((i) => !i.done);
+  const inbox = live.filter((i) => i.tag === null);
+  const firstGroup = items.find((i) => i.group)?.group ?? "";
 
   return (
     <>
       <div className="panel gtd-head">
         <div>
           <h2>
-            Open Loops{" "}
+            GTD 工作流{" "}
             <span className="count">
-              {totalOpen} 未闭环 · {totalDone} 已完成
+              收集箱 {inbox.length} · 已厘清 {live.length - inbox.length}
             </span>
           </h2>
-          <p className="hint">勾选即写回 open-loops.md（写前自动备份）。闭环后建议删除或移到对应 wiki 页。</p>
+          <p className="hint">
+            捕获 → <strong>厘清</strong>（判定类型）→ 整理（自动归类）→ 回顾 → 执行。
+            分类写回 open-loops.md 的 <code>@标记</code>，Obsidian 里照常可读。
+          </p>
         </div>
         <label className="toggle-done">
           <input type="checkbox" checked={showDone} onChange={(e) => setShowDone(e.target.checked)} />
@@ -128,64 +165,108 @@ export function GtdBoard({ onToast }: Props) {
         </label>
       </div>
 
-      {groups.map((g) => {
-        const visible = showDone ? g.items : g.items.filter((i) => !i.done);
-        return (
-          <section className="panel loop-group" key={g.title}>
-            <h3>
-              {g.title}
-              <span className="count">{g.items.filter((i) => !i.done).length} 未闭环</span>
-            </h3>
+      <section className="panel">
+        <h3 className="bucket-title">
+          收集箱 <span className="count">{inbox.length} 待厘清</span>
+        </h3>
+        <p className="hint">
+          GTD 的核心一步：这条<strong>是可执行的行动吗</strong>？选一个类型，它就离开收集箱。
+        </p>
+        {inbox.length === 0 ? (
+          <p className="empty">收集箱已清空 —— 每条都厘清过了。</p>
+        ) : (
+          inbox.map((item) => (
+            <div className={`clarify-card depth-${item.depth}`} key={item.line}>
+              <div className="clarify-text">{stripMd(item.text)}</div>
+              {item.group && <div className="clarify-src">来自：{item.group}</div>}
+              <div className="clarify-actions">
+                {BUCKETS.map((b) => (
+                  <button
+                    key={b.tag}
+                    className={`act tag-${b.tag}`}
+                    disabled={busy === item.line}
+                    title={b.desc}
+                    onClick={() => void classify(item, b.tag)}
+                  >
+                    {b.label}
+                  </button>
+                ))}
+                <button className="act reject" disabled={busy === item.line} onClick={() => void toggle(item)}>
+                  完成/丢弃
+                </button>
+              </div>
+            </div>
+          ))
+        )}
 
-            {visible.length === 0 ? (
-              <p className="empty">本组已全部闭环。</p>
-            ) : (
-              visible.map((item) => (
-                <div className={`loop-row depth-${item.depth} ${item.done ? "done" : ""}`} key={item.line}>
+        {adding ? (
+          <div className="add-row">
+            <input
+              autoFocus
+              value={draft}
+              placeholder="捕获一条新的（先不用想类型，回车提交）"
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void submitAdd(firstGroup);
+                if (e.key === "Escape") {
+                  setAdding(false);
+                  setDraft("");
+                }
+              }}
+            />
+            <button className="act" onClick={() => void submitAdd(firstGroup)}>
+              捕获
+            </button>
+            <button
+              className="act"
+              onClick={() => {
+                setAdding(false);
+                setDraft("");
+              }}
+            >
+              取消
+            </button>
+          </div>
+        ) : (
+          <button className="act add-btn" onClick={() => setAdding(true)}>
+            + 捕获一条
+          </button>
+        )}
+      </section>
+
+      {BUCKETS.map((b) => {
+        const bucketItems = live.filter((i) => i.tag === b.tag);
+        if (bucketItems.length === 0) return null;
+        return (
+          <section className={`panel bucket bucket-${b.tag}`} key={b.tag}>
+            <h3 className="bucket-title">
+              {b.label} <span className="count">{bucketItems.length}</span>
+            </h3>
+            <p className="hint">{b.desc}</p>
+            {bucketItems.map((item) => (
+              <div className={`loop-row depth-${item.depth} ${item.done ? "done" : ""}`} key={item.line}>
+                {b.actionable ? (
                   <input
                     type="checkbox"
                     checked={item.done}
                     disabled={busy === item.line}
                     onChange={() => void toggle(item)}
+                    title="标记完成"
                   />
-                  <span className="loop-text">{stripMd(item.text)}</span>
-                </div>
-              ))
-            )}
-
-            {adding === g.title ? (
-              <div className="add-row">
-                <input
-                  autoFocus
-                  value={draft}
-                  placeholder="新待办内容，回车提交"
-                  onChange={(e) => setDraft(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") void submitAdd(g.title);
-                    if (e.key === "Escape") {
-                      setAdding(null);
-                      setDraft("");
-                    }
-                  }}
-                />
-                <button className="act" onClick={() => void submitAdd(g.title)}>
-                  添加
-                </button>
+                ) : (
+                  <span className="no-check" title="非行动项，没有完成态" />
+                )}
+                <span className="loop-text">{stripMd(item.text)}</span>
                 <button
-                  className="act"
-                  onClick={() => {
-                    setAdding(null);
-                    setDraft("");
-                  }}
+                  className="act tiny"
+                  disabled={busy === item.line}
+                  title="重新厘清（放回收集箱）"
+                  onClick={() => void classify(item, null)}
                 >
-                  取消
+                  重分类
                 </button>
               </div>
-            ) : (
-              <button className="act add-btn" onClick={() => setAdding(g.title)}>
-                + 加一条
-              </button>
-            )}
+            ))}
           </section>
         );
       })}

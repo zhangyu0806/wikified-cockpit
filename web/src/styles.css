@@ -486,6 +486,105 @@ button.act.more {
   text-decoration: line-through;
 }
 
+.bucket-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 14px;
+  margin: 0 0 4px;
+}
+
+.bucket-title .count {
+  color: var(--text-faint);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.panel.bucket {
+  border-left: 3px solid var(--border);
+}
+
+.panel.bucket-next {
+  border-left-color: var(--green);
+}
+.panel.bucket-project {
+  border-left-color: var(--accent);
+}
+.panel.bucket-wait {
+  border-left-color: var(--amber);
+}
+.panel.bucket-someday {
+  border-left-color: #7c6aa8;
+}
+.panel.bucket-ref {
+  border-left-color: var(--text-faint);
+}
+
+.clarify-card {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+
+.clarify-text {
+  font-size: 14px;
+  line-height: 1.55;
+  margin-bottom: 4px;
+}
+
+.clarify-src {
+  color: var(--text-faint);
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+
+.clarify-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+button.act.tag-next {
+  border-color: #2e6b45;
+  color: var(--green);
+}
+button.act.tag-project {
+  border-color: var(--accent-dim);
+  color: var(--accent);
+}
+button.act.tag-wait {
+  border-color: #6b5a2e;
+  color: var(--amber);
+}
+button.act.tag-someday {
+  border-color: #514372;
+  color: #c4b5fd;
+}
+button.act.tag-ref {
+  border-color: var(--border);
+  color: var(--text-dim);
+}
+
+button.act.tiny {
+  margin-left: auto;
+  padding: 1px 8px;
+  font-size: 12px;
+  color: var(--text-faint);
+  flex: none;
+}
+
+.no-check {
+  width: 13px;
+  height: 13px;
+  margin-top: 3px;
+  border-radius: 3px;
+  border: 1px dashed var(--text-faint);
+  flex: none;
+  opacity: 0.5;
+}
+
 .add-row {
   display: flex;
   gap: 8px;

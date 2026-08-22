@@ -145,6 +145,35 @@ NOEV=$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:$PORT/ap
   -H 'content-type: application/json' -d '{"id":"deadbeefdeadbeef"}')
 [ "$NOEV" = "404" ] && pass "未知 event id 被拒 404" || fail "unknown event not rejected ($NOEV)"
 
+# 12b. GTD 分类标记写入与清除
+CLS=$(curl -s -X POST "http://127.0.0.1:$PORT/api/open-loops/classify" \
+  -H 'content-type: application/json' -d '{"line":2,"expect":"- ✅ 待办一","tag":"wait"}')
+python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["ok"] and d["tag"]=="wait", d' <<<"$CLS" \
+  && grep -q '@wait' "$ROOT/wiki/context/open-loops.md" \
+  && pass "GTD 标记写入" || fail "classify write: $CLS"
+
+# 12c. 标记不重复叠加：再打另一个 tag 应替换而非追加
+curl -sf -X POST "http://127.0.0.1:$PORT/api/open-loops/classify" \
+  -H 'content-type: application/json' -d '{"line":2,"expect":"- ✅ @wait 待办一","tag":"ref"}' >/dev/null \
+  && [ "$(grep -c '@' "$ROOT/wiki/context/open-loops.md")" = "1" ] \
+  && grep -q '@ref' "$ROOT/wiki/context/open-loops.md" \
+  && pass "重复分类替换而非叠加" || fail "tag not replaced"
+
+# 12d. 完成标记在分类后仍保留
+grep -q '✅' "$ROOT/wiki/context/open-loops.md" \
+  && pass "分类保留完成标记" || fail "done mark lost on classify"
+
+# 12e. tag=null 清除分类
+curl -sf -X POST "http://127.0.0.1:$PORT/api/open-loops/classify" \
+  -H 'content-type: application/json' -d '{"line":2,"expect":"- ✅ @ref 待办一","tag":null}' >/dev/null \
+  && ! grep -q '@ref' "$ROOT/wiki/context/open-loops.md" \
+  && pass "清除分类" || fail "clear tag"
+
+# 12f. 非法 tag 拒绝
+BADTAG=$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:$PORT/api/open-loops/classify" \
+  -H 'content-type: application/json' -d '{"line":2,"expect":"- ✅ 待办一","tag":"nonsense"}')
+[ "$BADTAG" = "400" ] && pass "非法 tag 被拒 400" || fail "bad tag not rejected ($BADTAG)"
+
 # 13. 写操作不能触及 open-loops 之外的文件（无路径参数可传）
 BEFORE=$(md5sum "$ROOT/wiki/context/CRITICAL_FACTS.md" | cut -d' ' -f1)
 curl -s -X POST "http://127.0.0.1:$PORT/api/open-loops/add" \

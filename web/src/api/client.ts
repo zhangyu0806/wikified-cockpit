@@ -24,6 +24,8 @@ export interface UncompiledRaw {
   age_days: number | null;
 }
 
+export type GtdTag = "next" | "wait" | "someday" | "ref" | "project";
+
 export interface ExpireCandidate {
   id: string;
   type: string;
@@ -101,6 +103,11 @@ export const api = {
     ),
   addLoop: (group: string, text: string) =>
     postJson<{ ok: boolean; inserted_at: number }>("/api/open-loops/add", { group, text }),
+  classifyLoop: (line: number, expect: string, tag: GtdTag | null) =>
+    postJson<{ ok: boolean; line: number; text: string; tag: GtdTag | null }>(
+      "/api/open-loops/classify",
+      { line, expect, tag },
+    ),
   setRawStatus: (path: string, status: "compiled" | "archived" | "rejected") =>
     postJson<{ ok: boolean; path: string; status: string }>("/api/raw/status", { path, status }),
   deprecateEvent: (id: string) =>
