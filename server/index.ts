@@ -221,9 +221,7 @@ async function handlePage(url: URL): Promise<Response> {
   return jsonResponse({ path: rel, content });
 }
 
-/** 列出 wiki/ 下所有 md 供 wikilink 解析与文件树(相对路径)。 */
 async function handleTree(): Promise<Response> {
-  const wikiDir = join(WIKI_ROOT, "wiki");
   const out: string[] = [];
   async function walk(dir: string): Promise<void> {
     let entries;
@@ -242,7 +240,8 @@ async function handleTree(): Promise<Response> {
       }
     }
   }
-  await walk(wikiDir);
+  await walk(join(WIKI_ROOT, "wiki"));
+  await walk(join(WIKI_ROOT, "raw"));
   out.sort();
   return jsonResponse({ pages: out });
 }

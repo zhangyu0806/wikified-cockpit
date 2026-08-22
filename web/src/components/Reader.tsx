@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type MouseEvent } from "react";
 import MarkdownIt from "markdown-it";
 import { api } from "../api/client";
 
@@ -22,14 +22,24 @@ function slugToPath(target: string, pages: string[]): string | null {
 
 function renderMarkdown(content: string, pages: string[]): string {
   const withLinks = content.replace(/\[\[([^\]]+)\]\]/g, (_m, inner: string) => {
-    const label = inner.includes("|") ? inner.split("|")[1] : inner;
-    const target = inner.split("|")[0] ?? inner;
-    const resolved = slugToPath(target ?? "", pages);
+    const parts = inner.split("|");
+    const target = parts[0] ?? inner;
+    const label = parts[1] ?? target;
+    const resolved = slugToPath(target, pages);
     const cls = resolved ? "wikilink" : "wikilink missing";
-    const dataPath = resolved ?? "";
-    return `<a class="${cls}" data-wikipath="${dataPath}">${label}</a>`;
+    return `<a class="${cls}" data-wikipath="${resolved ?? ""}">${label}</a>`;
   });
   return md.render(withLinks);
+}
+
+function groupOf(path: string): string {
+  const parts = path.split("/");
+  if (parts[0] === "raw") return `raw/${parts[1] ?? ""}`;
+  return parts.length > 2 ? (parts[1] ?? "wiki") : "wiki";
+}
+
+function leafOf(path: string): string {
+  return (path.split("/").pop() ?? path).replace(/\.md$/, "");
 }
 
 export function Reader({ initialPath, onNavigate }: Props) {
@@ -37,9 +47,13 @@ export function Reader({ initialPath, onNavigate }: Props) {
   const [path, setPath] = useState<string | null>(initialPath);
   const [content, setContent] = useState<string>("");
   const [err, setErr] = useState<string | null>(null);
+  const [filter, setFilter] = useState("");
 
   useEffect(() => {
-    api.tree().then((r) => setPages(r.pages)).catch(() => setPages([]));
+    api
+      .tree()
+      .then((r) => setPages(r.pages))
+      .catch(() => setPages([]));
   }, []);
 
   useEffect(() => {
@@ -49,6 +63,7 @@ export function Reader({ initialPath, onNavigate }: Props) {
   useEffect(() => {
     if (!path) {
       setContent("");
+      setErr(null);
       return;
     }
     api
@@ -57,60 +72,83 @@ export function Reader({ initialPath, onNavigate }: Props) {
         setContent(r.content);
         setErr(null);
       })
-      .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
+      .catch((e) => {
+        setContent("");
+        setErr(e instanceof Error ? e.message : String(e));
+      });
   }, [path]);
 
   const html = useMemo(() => (content ? renderMarkdown(content, pages) : ""), [content, pages]);
 
   const grouped = useMemo(() => {
-    const g: Record<string, string[]> = {};
+    const needle = filter.trim().toLowerCase();
+    const g = new Map<string, string[]>();
     for (const p of pages) {
-      const parts = p.replace(/^wiki\//, "").split("/");
-      const grp = parts.length > 1 ? parts[0]! : "root";
-      (g[grp] ??= []).push(p);
+      if (needle && !p.toLowerCase().includes(needle)) continue;
+      const key = groupOf(p);
+      const list = g.get(key);
+      if (list) list.push(p);
+      else g.set(key, [p]);
     }
-    return g;
-  }, [pages]);
+    return [...g.entries()].sort(([a], [b]) => a.localeCompare(b));
+  }, [pages, filter]);
 
-  function onContentClick(e: React.MouseEvent<HTMLDivElement>) {
+  function open(p: string) {
+    setPath(p);
+    onNavigate(p);
+  }
+
+  function onContentClick(e: MouseEvent<HTMLDivElement>) {
     const el = e.target as HTMLElement;
     if (el.tagName === "A" && el.classList.contains("wikilink")) {
-      const target = el.getAttribute("data-wikipath");
-      if (target) {
-        setPath(target);
-        onNavigate(target);
-      }
       e.preventDefault();
+      const target = el.getAttribute("data-wikipath");
+      if (target) open(target);
     }
   }
 
   return (
     <div className="reader">
       <nav className="filetree">
-        {Object.entries(grouped)
-          .sort()
-          .map(([grp, ps]) => (
+        <input
+          className="tree-filter"
+          value={filter}
+          placeholder="过滤文件名…"
+          onChange={(e) => setFilter(e.target.value)}
+        />
+        {grouped.length === 0 ? (
+          <p className="empty">无匹配文件。</p>
+        ) : (
+          grouped.map(([grp, ps]) => (
             <div key={grp}>
-              <div className="grp">{grp}</div>
+              <div className="grp">
+                {grp} <span className="grp-count">{ps.length}</span>
+              </div>
               {ps.map((p) => (
-                <a
-                  key={p}
-                  className={p === path ? "active" : ""}
-                  onClick={() => {
-                    setPath(p);
-                    onNavigate(p);
-                  }}
-                >
-                  {p.replace(/^wiki\//, "").replace(/\.md$/, "").split("/").pop()}
+                <a key={p} className={p === path ? "active" : ""} onClick={() => open(p)} title={p}>
+                  {leafOf(p)}
                 </a>
               ))}
             </div>
-          ))}
+          ))
+        )}
       </nav>
+
       <div className="markdown" onClick={onContentClick}>
         {path && <div className="crumb">{path}</div>}
-        {err && <div className="error">{err}</div>}
-        {!path && <p className="empty">从左侧选一页，或在复盘里点条目跳过来。</p>}
+        {err && (
+          <div className="state-box error-box">
+            <div className="state-title">打不开这个页面</div>
+            <div className="state-msg">{err}</div>
+            <div className="state-hint">路径：{path}</div>
+          </div>
+        )}
+        {!path && (
+          <div className="state-box">
+            <div className="state-title">选一页开始</div>
+            <div className="state-msg">从左侧文件树选择，或在「复盘」里点条目跳过来。</div>
+          </div>
+        )}
         {path && !err && <div dangerouslySetInnerHTML={{ __html: html }} />}
       </div>
     </div>

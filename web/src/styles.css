@@ -499,6 +499,63 @@ button.act.add-btn {
   word-break: break-all;
 }
 
+.tree-filter {
+  width: 100%;
+  margin-bottom: 10px;
+  padding: 5px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.tree-filter:focus {
+  outline: none;
+  border-color: var(--accent-dim);
+}
+
+.grp-count {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.state-box {
+  margin-top: 48px;
+  padding: 28px 24px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  text-align: center;
+}
+
+.state-box.error-box {
+  border-color: #6b2e2e;
+  border-style: solid;
+}
+
+.state-title {
+  font-size: 15px;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+
+.state-box.error-box .state-title {
+  color: var(--red);
+}
+
+.state-msg {
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.state-hint {
+  margin-top: 10px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-faint);
+  word-break: break-all;
+}
+
 .toast {
   position: fixed;
   bottom: 24px;

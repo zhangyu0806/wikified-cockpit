@@ -106,7 +106,7 @@ export function ReviewView({ report, onResolved, onToast, onOpenPage }: Props) {
         ) : (
           <>
             {raw.slice(0, rawLimit).map((r) => (
-              <div className="card clickable" key={r.path} onClick={() => onOpenPage(r.path)}>
+              <div className="card clickable" key={r.path} onClick={() => onOpenPage(`raw/${r.path}`)}>
                 <div className="card-head">
                   <span className="badge">{r.category}</span>
                   <span className="age">{ageText(r.age_days)}</span>
