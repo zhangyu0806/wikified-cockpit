@@ -20,16 +20,53 @@ EOF
 }
 
 cmd_install() {
-  command -v bun >/dev/null || { echo "找不到 bun"; exit 1; }
-  command -v systemctl >/dev/null || { echo "此系统无 systemd，请改用 ./start.sh"; exit 1; }
+  if ! command -v bun >/dev/null; then
+    echo "找不到 bun。安装：curl -fsSL https://bun.sh/install | bash"
+    exit 1
+  fi
+  if ! command -v systemctl >/dev/null; then
+    cat <<'EOM'
+此系统没有 systemd（macOS 或精简容器），无法装成 systemd 服务。
+
+替代方案：
+  · 临时前台跑：      ./start.sh
+  · 后台跑（通用）：   nohup ./start.sh > cockpit.log 2>&1 &
+  · macOS 常驻：       用 launchd，把 start.sh 包成 ~/Library/LaunchAgents 里的 plist
+
+功能完全一样，只是少了开机自启和崩溃自愈。
+EOM
+    exit 1
+  fi
 
   [ -d "$REPO/node_modules" ] || (cd "$REPO" && bun install)
   echo "构建前端…"
   (cd "$REPO" && bun run build >/dev/null)
 
+  # 数据根不存在就别装——服务必然起不来，且此处的报错比服务日志清楚得多。
+  # 这个检查必须在动既有 unit 之前，否则重装失败会毁掉用户已装好的服务。
+  ROOT_CHECK="${LLM_WIKI_ROOT:-$HOME/llm-wiki}"
+  if [ ! -d "$ROOT_CHECK" ]; then
+    echo
+    echo "找不到 Wikified 数据目录：$ROOT_CHECK"
+    echo "  · 已装 Wikified 但路径不同：LLM_WIKI_ROOT=/你的/路径 ./install-service.sh"
+    echo "  · 还没装：见 https://github.com/zhangyu0806/wikified"
+    exit 1
+  fi
+
   mkdir -p "$UNIT_DIR" "$LOG_DIR"
-  # 安装到 systemd 用户目录。用复制而非软链，避免 repo 移动后服务失效。
-  sed "s|%h/wikified-cockpit|$REPO|g" "$REPO/$UNIT_NAME" > "$UNIT_DIR/$UNIT_NAME"
+  # 先写临时文件、装配完再原子替换，避免中途失败留下半成品 unit。
+  TMP_UNIT=$(mktemp "$UNIT_DIR/.$UNIT_NAME.XXXXXX")
+  sed "s|%h/wikified-cockpit|$REPO|g" "$REPO/$UNIT_NAME" > "$TMP_UNIT"
+
+  # 安装时的 LLM_WIKI_ROOT / COCKPIT_PORT 要写进 unit，否则服务起来读不到自定义位置。
+  if [ -n "${LLM_WIKI_ROOT:-}" ]; then
+    sed -i "/^Environment=COCKPIT_PORT/a Environment=LLM_WIKI_ROOT=$LLM_WIKI_ROOT" "$TMP_UNIT"
+    echo "数据根：$LLM_WIKI_ROOT"
+  fi
+  if [ -n "${COCKPIT_PORT:-}" ]; then
+    sed -i "s|^Environment=COCKPIT_PORT=.*|Environment=COCKPIT_PORT=$COCKPIT_PORT|" "$TMP_UNIT"
+  fi
+  mv "$TMP_UNIT" "$UNIT_DIR/$UNIT_NAME"
 
   systemctl --user daemon-reload
   systemctl --user enable --now "$UNIT_NAME"

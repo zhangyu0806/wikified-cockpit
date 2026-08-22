@@ -1,8 +1,36 @@
 # Wikified Cockpit
 
-本机 **复盘 + GTD 驾驶舱**，配合 [Wikified](https://github.com/zhangyu0806/wikified)
-记忆系统使用。从 Windows 浏览器访问跑在 WSL2 里的本机服务，读 `~/llm-wiki` 的 Markdown，
-把复盘/审批/GTD 变成点一下就完成的界面。
+[Wikified](https://github.com/zhangyu0806/wikified) 记忆系统的**本机 Web 界面**：把复盘、
+审批、GTD 从命令行变成点一下就完成。浏览器访问本机服务，读你自己的 Markdown 库，
+数据不出本机。
+
+> **它不是笔记软件。** 没有 Wikified 数据库（`~/llm-wiki`）它无法运行——
+> 它是那套 CLI 的界面，不是独立产品。
+
+## 前置要求
+
+| 必需 | 说明 |
+|---|---|
+| [Wikified](https://github.com/zhangyu0806/wikified) | 记忆系统本体。装完你会有 `~/llm-wiki` 数据库和 `llm-wiki-*` 命令 |
+| [Bun](https://bun.sh) ≥ 1.0 | `curl -fsSL https://bun.sh/install \| bash` |
+| Linux / WSL2 | 常驻服务用 systemd user service。macOS 可前台运行，见下 |
+
+## 三步开始
+
+```bash
+git clone https://github.com/zhangyu0806/wikified-cockpit.git
+cd wikified-cockpit
+./install-service.sh
+```
+
+打开 `http://localhost:4177` 就能用了。装完即开机自启、后台常驻、崩溃自愈，
+之后不需要再启动任何东西。
+
+数据库不在默认位置时：
+
+```bash
+LLM_WIKI_ROOT=/你的/路径 ./install-service.sh
+```
 
 ## 定位：和 Obsidian 分工，不重造
 

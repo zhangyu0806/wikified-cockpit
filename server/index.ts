@@ -376,7 +376,17 @@ async function serveStatic(pathname: string): Promise<Response> {
 
 // ---------- 路由 ----------
 
-const server = Bun.serve({
+if (!existsSync(WIKI_ROOT)) {
+  console.error(`\n  找不到 Wikified 数据目录：${WIKI_ROOT}\n`);
+  console.error(`  本应用是 Wikified 记忆系统的界面，需要先有一个数据库。`);
+  console.error(`  · 已装 Wikified：用 LLM_WIKI_ROOT=/你的/路径 指过去`);
+  console.error(`  · 还没装：见 https://github.com/zhangyu0806/wikified\n`);
+  process.exit(1);
+}
+
+let server: ReturnType<typeof Bun.serve>;
+try {
+  server = Bun.serve({
   hostname: HOST,
   port: PORT,
   async fetch(req) {
@@ -398,7 +408,19 @@ const server = Bun.serve({
 
     return serveStatic(pathname);
   },
-});
+  });
+} catch (err) {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (/port|EADDRINUSE/i.test(msg)) {
+    console.error(`\n  端口 ${PORT} 已被占用。\n`);
+    console.error(`  · 换端口：COCKPIT_PORT=4188 再启动`);
+    console.error(`  · 或看谁占着：ss -tlnp | grep ${PORT}`);
+    console.error(`  · 若是本应用的旧实例：systemctl --user restart wikified-cockpit\n`);
+  } else {
+    console.error(`\n  启动失败：${msg}\n`);
+  }
+  process.exit(1);
+}
 
 console.log(`\n  Wikified Cockpit`);
 console.log(`  ├─ 后端      http://${HOST}:${server.port}`);
