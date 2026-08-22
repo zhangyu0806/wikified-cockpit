@@ -1,0 +1,22 @@
+[Unit]
+Description=Wikified Cockpit — 本机复盘 + GTD 驾驶舱
+Documentation=https://github.com/zhangyu0806/wikified-cockpit
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/wikified-cockpit
+Environment=COCKPIT_PORT=4177
+ExecStart=%h/.local/bin/bun run %h/wikified-cockpit/server/index.ts
+Restart=on-failure
+RestartSec=3
+
+# 只绑 127.0.0.1，不需要任何提权
+NoNewPrivileges=true
+PrivateTmp=true
+
+StandardOutput=append:%h/.local/state/wikified-cockpit/server.log
+StandardError=append:%h/.local/state/wikified-cockpit/server.log
+
+[Install]
+WantedBy=default.target

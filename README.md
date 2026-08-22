@@ -47,20 +47,40 @@ Cockpit 是 `llm-wiki-*` CLI 的**薄壳**，不重实现记忆逻辑：
 
 ## 用法
 
+### 推荐：装成常驻服务（装一次，之后不用管）
+
+```bash
+./install-service.sh            # 构建 + 安装 systemd user service 并启动
+```
+
+装完即：开机自启、后台静默常驻、崩溃 3 秒内自动重启，**不占 tmux session**。
+浏览器打开 `http://localhost:4177` 就用，不需要每次先启动什么。
+
+```bash
+./install-service.sh status     # 看状态
+./install-service.sh logs       # 跟踪日志
+./install-service.sh uninstall  # 移除服务（代码保留）
+```
+
+> 退出所有登录会话后 systemd user 服务默认会停。要让它始终常驻，执行一次
+> `sudo loginctl enable-linger $USER`。
+
+### 临时前台运行
+
 ```bash
 ./start.sh              # 首次自动 bun install + build，然后启动（端口 4177）
 ./start.sh --rebuild    # 改了前端后强制重建
 COCKPIT_PORT=5000 ./start.sh
 ```
 
-Windows 浏览器打开 `http://localhost:4177`。
-
-开发模式（前端热更新）：
+### 开发模式（前端热更新）
 
 ```bash
 bun run server          # 终端 1：后端 :4177
 bun run dev:web         # 终端 2：Vite :4176（代理 /api 到后端）
 ```
+
+改完前端要让常驻服务生效：`bun run build && systemctl --user restart wikified-cockpit`。
 
 ## 三个视图
 
