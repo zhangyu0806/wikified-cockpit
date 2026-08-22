@@ -221,6 +221,77 @@ async function handleClassifyLoop(req: Request): Promise<Response> {
 }
 
 /**
+ * 某条待办的完整上下文：父项、子项、所属分组，以及相关 wiki 页。
+ * 相关页用 enrich --query --ambient 做语义召回（复用 CLI 的检索能力，
+ * 不在此重造匹配逻辑；--ambient 保证召回内容不带 next-action）。
+ */
+async function handleLoopContext(url: URL): Promise<Response> {
+  const lineParam = Number(url.searchParams.get("line"));
+  if (!Number.isInteger(lineParam) || lineParam < 0) return errorResponse("非法行号");
+
+  const p = openLoopsPath();
+  if (!existsSync(p)) return errorResponse("open-loops.md 不存在", 404);
+  const lines = (await readFile(p, "utf-8")).split("\n");
+  const target = lines[lineParam];
+  if (target === undefined) return errorResponse("行号越界", 404);
+
+  const indentOf = (s: string): number => (/^(\s*)/.exec(s)?.[1] ?? "").replace(/\t/g, "  ").length;
+  const baseIndent = indentOf(target);
+
+  let group = "";
+  for (let i = lineParam; i >= 0; i -= 1) {
+    const h = /^##\s+(.*)/.exec(lines[i] ?? "");
+    if (h) {
+      group = (h[1] ?? "").trim();
+      break;
+    }
+  }
+
+  let parent: string | null = null;
+  if (baseIndent > 0) {
+    for (let i = lineParam - 1; i >= 0; i -= 1) {
+      const cur = lines[i] ?? "";
+      if (/^\s*[-*+]\s/.test(cur) && indentOf(cur) < baseIndent) {
+        parent = cur.trim();
+        break;
+      }
+      if (/^##\s/.test(cur)) break;
+    }
+  }
+
+  const children: string[] = [];
+  for (let i = lineParam + 1; i < lines.length; i += 1) {
+    const cur = lines[i] ?? "";
+    if (!/^\s*[-*+]\s/.test(cur)) break;
+    if (indentOf(cur) <= baseIndent) break;
+    children.push(cur.trim());
+  }
+
+  const query = target
+    .replace(/^\s*[-*+]\s*/, "")
+    .replace(/@\w+\s*/g, "")
+    .replace(/[`*]/g, "")
+    .slice(0, 160);
+
+  let related: { title: string; path: string | null }[] = [];
+  const enrich = join(BIN_DIR, "llm-wiki-enrich");
+  if (existsSync(enrich) && query.trim().length >= 3) {
+    const out = await runCli(enrich, ["--query", query, "--ambient", "--limit", "5", "--max-chars", "1800"]);
+    if (out.ok) {
+      for (const m of out.stdout.matchAll(/^###\s+wiki-page:\s+(.+)$/gm)) {
+        const rel = (m[1] ?? "").trim();
+        if (!rel) continue;
+        const full = rel.startsWith("wiki/") ? rel : `wiki/${rel}`;
+        related.push({ title: rel.replace(/\.md$/, ""), path: safeWikiPath(full) ? full : null });
+      }
+    }
+  }
+  related = related.filter((x, i, a) => a.findIndex((y) => y.path === x.path) === i).slice(0, 5);
+
+  return jsonResponse({ line: lineParam, group, parent, self: target.trim(), children, related });
+}
+
+/**
  * 从 open-loops.md 删掉某一行（含其缩进子项）。
  * 用于「参考资料已移进 wiki 页」这类毕业场景 —— 它不该继续占着未闭环清单。
  * 同一套乐观锁；删除范围包含后续更深缩进的子行，避免留下孤儿子项。
@@ -490,6 +561,7 @@ try {
       if (pathname === "/api/open-loops/add" && req.method === "POST") return handleAddLoop(req);
       if (pathname === "/api/open-loops/classify" && req.method === "POST") return handleClassifyLoop(req);
       if (pathname === "/api/open-loops/remove" && req.method === "POST") return handleRemoveLoop(req);
+      if (pathname === "/api/open-loops/context" && req.method === "GET") return handleLoopContext(url);
       if (pathname === "/api/raw/status" && req.method === "POST") return handleRawStatus(req);
       if (pathname === "/api/events/deprecate" && req.method === "POST") return handleDeprecateEvent(req);
       if (pathname === "/api/page" && req.method === "GET") return handlePage(url);

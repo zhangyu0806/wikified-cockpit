@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, type GtdTag } from "../api/client";
+import { api, type GtdTag, type LoopContext } from "../api/client";
 
 interface Props {
   onToast: (msg: string, err?: boolean) => void;
@@ -120,6 +120,9 @@ export function GtdBoard({ onToast, onOpenPage }: Props) {
   const [draft, setDraft] = useState("");
   const [showDone, setShowDone] = useState(false);
   const [pages, setPages] = useState<string[]>([]);
+  const [openLine, setOpenLine] = useState<number | null>(null);
+  const [ctx, setCtx] = useState<LoopContext | null>(null);
+  const [ctxLoading, setCtxLoading] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -159,6 +162,78 @@ export function GtdBoard({ onToast, onOpenPage }: Props) {
       ) : (
         <span key={i}>{seg.text}</span>
       ),
+    );
+  }
+
+  async function expand(item: LoopItem) {
+    if (openLine === item.line) {
+      setOpenLine(null);
+      setCtx(null);
+      return;
+    }
+    setOpenLine(item.line);
+    setCtx(null);
+    setCtxLoading(true);
+    try {
+      setCtx(await api.loopContext(item.line));
+    } catch (e) {
+      onToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setCtxLoading(false);
+    }
+  }
+
+  function renderDetail(item: LoopItem) {
+    if (openLine !== item.line) return null;
+    return (
+      <div className="loop-detail">
+        {ctxLoading && <span className="empty">读取上下文…</span>}
+        {ctx && (
+          <>
+            <div className="detail-meta">
+              分组 <strong>{ctx.group || "（无）"}</strong> · open-loops.md 第 {ctx.line + 1} 行
+            </div>
+            {ctx.parent && (
+              <div className="detail-block">
+                <div className="detail-label">所属父项</div>
+                <div className="detail-text">{renderText(ctx.parent.replace(/^[-*+]\s*/, ""))}</div>
+              </div>
+            )}
+            {ctx.children.length > 0 && (
+              <div className="detail-block">
+                <div className="detail-label">子项（{ctx.children.length}）</div>
+                {ctx.children.map((c, i) => (
+                  <div className="detail-text" key={i}>
+                    · {renderText(c.replace(/^[-*+]\s*/, ""))}
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="detail-block">
+              <div className="detail-label">相关知识页（点开查看背景）</div>
+              {ctx.related.length === 0 ? (
+                <span className="empty">没找到相关页。</span>
+              ) : (
+                ctx.related.map((r) => (
+                  <div key={r.title}>
+                    {r.path ? (
+                      <span className="loop-link" onClick={() => onOpenPage(r.path!)}>
+                        {r.title}
+                      </span>
+                    ) : (
+                      <span className="detail-text">{r.title}</span>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+            <div className="detail-block">
+              <div className="detail-label">原文</div>
+              <code className="detail-raw">{ctx.self}</code>
+            </div>
+          </>
+        )}
+      </div>
     );
   }
 
@@ -258,8 +333,12 @@ export function GtdBoard({ onToast, onOpenPage }: Props) {
         ) : (
           inbox.map((item) => (
             <div className={`clarify-card depth-${item.depth}`} key={item.line}>
-              <div className="clarify-text">{renderText(item.text)}</div>
+              <div className="clarify-text expandable" onClick={() => void expand(item)}>
+                <span className="caret">{openLine === item.line ? "▾" : "▸"}</span>
+                {renderText(item.text)}
+              </div>
               {item.group && <div className="clarify-src">来自：{item.group}</div>}
+              {renderDetail(item)}
               <div className="clarify-actions">
                 {BUCKETS.map((b) => (
                   <button
@@ -325,7 +404,8 @@ export function GtdBoard({ onToast, onOpenPage }: Props) {
             </h3>
             <p className="hint">{b.desc}</p>
             {bucketItems.map((item) => (
-              <div className={`loop-row depth-${item.depth} ${item.done ? "done" : ""}`} key={item.line}>
+              <div className="loop-item-wrap" key={item.line}>
+              <div className={`loop-row depth-${item.depth} ${item.done ? "done" : ""}`}>
                 {b.actionable ? (
                   <input
                     type="checkbox"
@@ -337,7 +417,10 @@ export function GtdBoard({ onToast, onOpenPage }: Props) {
                 ) : (
                   <span className="no-check" title="非行动项，没有完成态" />
                 )}
-                <span className="loop-text">{renderText(item.text)}</span>
+                <span className="loop-text expandable" onClick={() => void expand(item)}>
+                  <span className="caret">{openLine === item.line ? "▾" : "▸"}</span>
+                  {renderText(item.text)}
+                </span>
                 <span className="row-actions">
                   {b.tag === "wait" && (
                     <button
@@ -388,6 +471,8 @@ export function GtdBoard({ onToast, onOpenPage }: Props) {
                     重分类
                   </button>
                 </span>
+              </div>
+              {renderDetail(item)}
               </div>
             ))}
           </section>

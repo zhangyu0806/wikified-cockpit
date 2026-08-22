@@ -174,6 +174,17 @@ BADTAG=$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:$PORT/
   -H 'content-type: application/json' -d '{"line":2,"expect":"- ✅ 待办一","tag":"nonsense"}')
 [ "$BADTAG" = "400" ] && pass "非法 tag 被拒 400" || fail "bad tag not rejected ($BADTAG)"
 
+# 12f2. context 端点：返回分组/父项/子项，任意行都可查
+printf '# Open Loops\n## 组A\n- 父项\n  - 子项一\n  - 子项二\n' >"$ROOT/wiki/context/open-loops.md"
+CTXP=$(curl -sf "http://127.0.0.1:$PORT/api/open-loops/context?line=2")
+python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["group"]=="组A" and len(d["children"])==2 and d["parent"] is None, d' <<<"$CTXP" \
+  && pass "context 返回父项的分组与子项" || fail "context parent: $CTXP"
+CTXC=$(curl -sf "http://127.0.0.1:$PORT/api/open-loops/context?line=3")
+python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["parent"]=="- 父项" and d["children"]==[], d' <<<"$CTXC" \
+  && pass "context 为子项解析出父项" || fail "context child: $CTXC"
+CTXBAD=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/api/open-loops/context?line=9999")
+[ "$CTXBAD" = "404" ] && pass "context 越界行 404" || fail "context oob ($CTXBAD)"
+
 # 12g. 移除行：连同更深缩进的子项一起删，不留孤儿
 printf '# Open Loops\n## 组A\n- 父项\n  - 子项一\n  - 子项二\n- 另一项\n' >"$ROOT/wiki/context/open-loops.md"
 RM=$(curl -s -X POST "http://127.0.0.1:$PORT/api/open-loops/remove" \

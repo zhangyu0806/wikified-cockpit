@@ -587,6 +587,69 @@ button.act.tiny {
   opacity: 1;
 }
 
+.expandable {
+  cursor: pointer;
+}
+
+.expandable .caret {
+  color: var(--text-faint);
+  font-size: 11px;
+  margin-right: 6px;
+}
+
+.expandable:hover .caret {
+  color: var(--accent);
+}
+
+.loop-item-wrap + .loop-item-wrap {
+  border-top: 1px solid transparent;
+}
+
+.loop-detail {
+  margin: 4px 0 12px 30px;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.detail-meta {
+  color: var(--text-faint);
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+
+.detail-block {
+  margin-bottom: 8px;
+}
+
+.detail-block:last-child {
+  margin-bottom: 0;
+}
+
+.detail-label {
+  color: var(--text-faint);
+  font-size: 12px;
+  margin-bottom: 3px;
+}
+
+.detail-text {
+  color: var(--text-dim);
+  line-height: 1.55;
+}
+
+.detail-raw {
+  display: block;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-faint);
+  background: var(--bg-elev);
+  padding: 6px 8px;
+  border-radius: 5px;
+  word-break: break-all;
+}
+
 .loop-link {
   color: var(--accent);
   cursor: pointer;

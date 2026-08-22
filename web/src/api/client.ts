@@ -26,6 +26,15 @@ export interface UncompiledRaw {
 
 export type GtdTag = "next" | "wait" | "someday" | "ref" | "project";
 
+export interface LoopContext {
+  line: number;
+  group: string;
+  parent: string | null;
+  self: string;
+  children: string[];
+  related: { title: string; path: string | null }[];
+}
+
 export interface ExpireCandidate {
   id: string;
   type: string;
@@ -113,6 +122,7 @@ export const api = {
       line,
       expect,
     }),
+  loopContext: (line: number) => getJson<LoopContext>(`/api/open-loops/context?line=${line}`),
   setRawStatus: (path: string, status: "compiled" | "archived" | "rejected") =>
     postJson<{ ok: boolean; path: string; status: string }>("/api/raw/status", { path, status }),
   deprecateEvent: (id: string) =>
