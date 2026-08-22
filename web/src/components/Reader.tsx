@@ -5,6 +5,7 @@ import { api } from "../api/client";
 interface Props {
   initialPath: string | null;
   onNavigate: (path: string) => void;
+  onBack: () => void;
 }
 
 const md = new MarkdownIt({ html: false, linkify: true, breaks: false });
@@ -42,12 +43,13 @@ function leafOf(path: string): string {
   return (path.split("/").pop() ?? path).replace(/\.md$/, "");
 }
 
-export function Reader({ initialPath, onNavigate }: Props) {
+export function Reader({ initialPath, onNavigate, onBack }: Props) {
   const [pages, setPages] = useState<string[]>([]);
   const [path, setPath] = useState<string | null>(initialPath);
   const [content, setContent] = useState<string>("");
   const [err, setErr] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     api
@@ -98,6 +100,15 @@ export function Reader({ initialPath, onNavigate }: Props) {
     onNavigate(p);
   }
 
+  function toggleGroup(grp: string) {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(grp)) next.delete(grp);
+      else next.add(grp);
+      return next;
+    });
+  }
+
   function onContentClick(e: MouseEvent<HTMLDivElement>) {
     const el = e.target as HTMLElement;
     if (el.tagName === "A" && el.classList.contains("wikilink")) {
@@ -119,23 +130,35 @@ export function Reader({ initialPath, onNavigate }: Props) {
         {grouped.length === 0 ? (
           <p className="empty">无匹配文件。</p>
         ) : (
-          grouped.map(([grp, ps]) => (
-            <div key={grp}>
-              <div className="grp">
-                {grp} <span className="grp-count">{ps.length}</span>
+          grouped.map(([grp, ps]) => {
+            const isCollapsed = collapsed.has(grp) && !filter.trim();
+            return (
+              <div key={grp}>
+                <button className="grp" onClick={() => toggleGroup(grp)}>
+                  <span className="grp-caret">{isCollapsed ? "▸" : "▾"}</span>
+                  {grp} <span className="grp-count">{ps.length}</span>
+                </button>
+                {!isCollapsed &&
+                  ps.map((p) => (
+                    <a key={p} className={p === path ? "active" : ""} onClick={() => open(p)} title={p}>
+                      {leafOf(p)}
+                    </a>
+                  ))}
               </div>
-              {ps.map((p) => (
-                <a key={p} className={p === path ? "active" : ""} onClick={() => open(p)} title={p}>
-                  {leafOf(p)}
-                </a>
-              ))}
-            </div>
-          ))
+            );
+          })
         )}
       </nav>
 
       <div className="markdown" onClick={onContentClick}>
-        {path && <div className="crumb">{path}</div>}
+        {path && (
+          <div className="reader-head">
+            <button className="act back-btn" onClick={onBack}>
+              ← 返回
+            </button>
+            <span className="crumb">{path}</span>
+          </div>
+        )}
         {err && (
           <div className="state-box error-box">
             <div className="state-title">打不开这个页面</div>

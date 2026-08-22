@@ -3,6 +3,7 @@ import { api, type ReviewReport } from "./api/client";
 import { ReviewView } from "./components/ReviewView";
 import { GtdBoard } from "./components/GtdBoard";
 import { Reader } from "./components/Reader";
+import { LoopDetail, type DetailTarget } from "./components/LoopDetail";
 
 type Tab = "review" | "gtd" | "reader";
 
@@ -12,6 +13,9 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<{ msg: string; err: boolean } | null>(null);
   const [readerPath, setReaderPath] = useState<string | null>(null);
+  const [loopTarget, setLoopTarget] = useState<DetailTarget | null>(null);
+  const [gtdReload, setGtdReload] = useState(0);
+  const [returnTab, setReturnTab] = useState<Tab>("gtd");
 
   const loadReview = useCallback(async () => {
     try {
@@ -34,10 +38,14 @@ export function App() {
 
   const showToast = useCallback((msg: string, err = false) => setToast({ msg, err }), []);
 
-  const openPage = useCallback((path: string) => {
-    setReaderPath(path);
-    setTab("reader");
-  }, []);
+  const openPage = useCallback(
+    (path: string) => {
+      setReturnTab(tab);
+      setReaderPath(path);
+      setTab("reader");
+    },
+    [tab],
+  );
 
   const last = report?.last_review_days_ago ?? null;
   const cadence = report?.cadence_days ?? 7;
@@ -72,9 +80,27 @@ export function App() {
           !error && <div className="loading">加载中…</div>
         ))}
 
-      {tab === "gtd" && <GtdBoard onToast={showToast} onOpenPage={openPage} />}
+      {tab === "gtd" &&
+        (loopTarget ? (
+          <LoopDetail
+            target={loopTarget}
+            onBack={() => setLoopTarget(null)}
+            onOpenPage={openPage}
+            onToast={showToast}
+            onChanged={() => setGtdReload((n) => n + 1)}
+          />
+        ) : (
+          <GtdBoard
+            onToast={showToast}
+            onOpenPage={openPage}
+            onOpen={(item) => setLoopTarget(item)}
+            reloadKey={gtdReload}
+          />
+        ))}
 
-      {tab === "reader" && <Reader initialPath={readerPath} onNavigate={setReaderPath} />}
+      {tab === "reader" && (
+        <Reader initialPath={readerPath} onNavigate={setReaderPath} onBack={() => setTab(returnTab)} />
+      )}
 
       {toast && <div className={`toast ${toast.err ? "err" : ""}`}>{toast.msg}</div>}
     </div>
