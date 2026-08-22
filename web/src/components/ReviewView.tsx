@@ -143,9 +143,10 @@ export function ReviewView({ report, onResolved, onToast, onOpenPage }: Props) {
                   <span className="badge">{r.category}</span>
                   <span className="age">{ageText(r.age_days)}</span>
                 </div>
-                <div className="sub link" onClick={() => onOpenPage(`raw/${r.path}`)}>
-                  {r.path}
+                <div className="raw-title link" onClick={() => onOpenPage(`raw/${r.path}`)}>
+                  {r.title || r.path}
                 </div>
+                <div className="sub">{r.path}</div>
                 <div className="actions">
                   <button className="act" disabled={busy === r.path} onClick={() => onOpenPage(`raw/${r.path}`)}>
                     查看

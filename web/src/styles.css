@@ -382,12 +382,19 @@ button.act:disabled {
   background: #232833;
 }
 
-.sub.link {
-  cursor: pointer;
-  color: var(--accent);
+.raw-title {
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.5;
+  margin-bottom: 2px;
 }
 
-.sub.link:hover {
+.raw-title.link {
+  cursor: pointer;
+}
+
+.raw-title.link:hover {
+  color: var(--accent);
   text-decoration: underline;
 }
 

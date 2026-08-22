@@ -19,6 +19,7 @@ export interface PromoteSuggestion {
 
 export interface UncompiledRaw {
   path: string;
+  title: string;
   category: string;
   age_days: number | null;
 }
