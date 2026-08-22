@@ -108,6 +108,11 @@ export const api = {
       "/api/open-loops/classify",
       { line, expect, tag },
     ),
+  removeLoop: (line: number, expect: string) =>
+    postJson<{ ok: boolean; line: number; removed: number }>("/api/open-loops/remove", {
+      line,
+      expect,
+    }),
   setRawStatus: (path: string, status: "compiled" | "archived" | "rejected") =>
     postJson<{ ok: boolean; path: string; status: string }>("/api/raw/status", { path, status }),
   deprecateEvent: (id: string) =>

@@ -220,6 +220,49 @@ async function handleClassifyLoop(req: Request): Promise<Response> {
   return jsonResponse({ ok: true, line, text: lines[line], tag });
 }
 
+/**
+ * 从 open-loops.md 删掉某一行（含其缩进子项）。
+ * 用于「参考资料已移进 wiki 页」这类毕业场景 —— 它不该继续占着未闭环清单。
+ * 同一套乐观锁；删除范围包含后续更深缩进的子行，避免留下孤儿子项。
+ */
+async function handleRemoveLoop(req: Request): Promise<Response> {
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return errorResponse("请求体不是合法 JSON");
+  }
+  const { line, expect } = (body ?? {}) as { line?: unknown; expect?: unknown };
+  if (typeof line !== "number" || !Number.isInteger(line) || line < 0) {
+    return errorResponse("非法行号");
+  }
+  if (typeof expect !== "string") return errorResponse("缺少 expect（该行当前文本）");
+
+  const p = openLoopsPath();
+  if (!existsSync(p)) return errorResponse("open-loops.md 不存在", 404);
+  const lines = (await readFile(p, "utf-8")).split("\n");
+  const target = lines[line];
+  if (target === undefined) return errorResponse("行号越界", 409);
+  if (target.trimEnd() !== expect.trimEnd()) {
+    return errorResponse("文件已变更（该行内容与预期不符），请刷新后重试", 409);
+  }
+
+  const indentOf = (s: string): number => (/^(\s*)/.exec(s)?.[1] ?? "").replace(/\t/g, "  ").length;
+  const baseIndent = indentOf(target);
+  let end = line + 1;
+  while (end < lines.length) {
+    const cur = lines[end] ?? "";
+    if (!/^\s*[-*+]\s/.test(cur)) break;
+    if (indentOf(cur) <= baseIndent) break;
+    end += 1;
+  }
+
+  const removed = end - line;
+  lines.splice(line, removed);
+  await writeOpenLoops(lines);
+  return jsonResponse({ ok: true, line, removed });
+}
+
 const RAW_STATUSES = new Set(["compiled", "archived", "rejected"]);
 
 /**
@@ -446,6 +489,7 @@ try {
       if (pathname === "/api/open-loops/toggle" && req.method === "POST") return handleToggleLoop(req);
       if (pathname === "/api/open-loops/add" && req.method === "POST") return handleAddLoop(req);
       if (pathname === "/api/open-loops/classify" && req.method === "POST") return handleClassifyLoop(req);
+      if (pathname === "/api/open-loops/remove" && req.method === "POST") return handleRemoveLoop(req);
       if (pathname === "/api/raw/status" && req.method === "POST") return handleRawStatus(req);
       if (pathname === "/api/events/deprecate" && req.method === "POST") return handleDeprecateEvent(req);
       if (pathname === "/api/page" && req.method === "GET") return handlePage(url);

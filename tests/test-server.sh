@@ -174,6 +174,21 @@ BADTAG=$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:$PORT/
   -H 'content-type: application/json' -d '{"line":2,"expect":"- ✅ 待办一","tag":"nonsense"}')
 [ "$BADTAG" = "400" ] && pass "非法 tag 被拒 400" || fail "bad tag not rejected ($BADTAG)"
 
+# 12g. 移除行：连同更深缩进的子项一起删，不留孤儿
+printf '# Open Loops\n## 组A\n- 父项\n  - 子项一\n  - 子项二\n- 另一项\n' >"$ROOT/wiki/context/open-loops.md"
+RM=$(curl -s -X POST "http://127.0.0.1:$PORT/api/open-loops/remove" \
+  -H 'content-type: application/json' -d '{"line":2,"expect":"- 父项"}')
+python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["removed"]==3, d' <<<"$RM" \
+  && ! grep -q '子项一' "$ROOT/wiki/context/open-loops.md" \
+  && grep -q '另一项' "$ROOT/wiki/context/open-loops.md" \
+  && pass "移除含子项，保留兄弟项" || fail "remove cascade: $RM"
+
+# 12h. 移除的乐观锁
+STALERM=$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:$PORT/api/open-loops/remove" \
+  -H 'content-type: application/json' -d '{"line":2,"expect":"- 不匹配"}')
+[ "$STALERM" = "409" ] && pass "移除的内容校验 409" || fail "remove stale not rejected ($STALERM)"
+
+
 # 13. 写操作不能触及 open-loops 之外的文件（无路径参数可传）
 BEFORE=$(md5sum "$ROOT/wiki/context/CRITICAL_FACTS.md" | cut -d' ' -f1)
 curl -s -X POST "http://127.0.0.1:$PORT/api/open-loops/add" \

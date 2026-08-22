@@ -3,6 +3,7 @@ import { api, type GtdTag } from "../api/client";
 
 interface Props {
   onToast: (msg: string, err?: boolean) => void;
+  onOpenPage: (path: string) => void;
 }
 
 interface LoopItem {
@@ -72,13 +73,53 @@ function stripMd(text: string): string {
   return text.replace(/`([^`]+)`/g, "$1").replace(/\*\*([^*]+)\*\*/g, "$1");
 }
 
-export function GtdBoard({ onToast }: Props) {
+/**
+ * 把条目文本里的可跳线索切成片段，让审核时能点开背景，而不是只盯一行字。
+ * 三类线索：[[wikilink]]、反引号里的 wiki/ 路径、以及能对上 wiki 页名的项目名。
+ */
+function linkify(text: string, pages: string[]): { text: string; path?: string }[] {
+  const byLeaf = new Map<string, string>();
+  for (const p of pages) {
+    const leaf = (p.split("/").pop() ?? p).replace(/\.md$/, "").toLowerCase();
+    if (!byLeaf.has(leaf)) byLeaf.set(leaf, p);
+  }
+
+  const pattern = /\[\[([^\]]+)\]\]|`([^`]*\.md)`|`([^`]+)`|([A-Za-z][A-Za-z0-9-]{2,})/g;
+  const out: { text: string; path?: string }[] = [];
+  let last = 0;
+  let m: RegExpExecArray | null;
+
+  while ((m = pattern.exec(text)) !== null) {
+    const [whole, wikilink, mdPath, code, word] = m;
+    const token = wikilink ?? mdPath ?? word;
+    if (!token) continue;
+
+    let resolved: string | undefined;
+    if (mdPath) {
+      resolved = pages.find((p) => p.endsWith(mdPath.replace(/^.*?(wiki\/)/, "$1"))) ?? undefined;
+    } else if (wikilink) {
+      resolved = byLeaf.get(wikilink.split("|")[0]?.trim().toLowerCase() ?? "");
+    } else if (word) {
+      resolved = byLeaf.get(word.toLowerCase());
+    }
+    if (!resolved) continue;
+
+    if (m.index > last) out.push({ text: text.slice(last, m.index) });
+    out.push({ text: wikilink ?? mdPath ?? code ?? word ?? whole, path: resolved });
+    last = m.index + whole.length;
+  }
+  if (last < text.length) out.push({ text: text.slice(last) });
+  return out.length > 0 ? out : [{ text }];
+}
+
+export function GtdBoard({ onToast, onOpenPage }: Props) {
   const [items, setItems] = useState<LoopItem[] | null>(null);
   const [exists, setExists] = useState(true);
   const [busy, setBusy] = useState<number | null>(null);
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState("");
   const [showDone, setShowDone] = useState(false);
+  const [pages, setPages] = useState<string[]>([]);
 
   const load = useCallback(async () => {
     try {
@@ -93,6 +134,46 @@ export function GtdBoard({ onToast }: Props) {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    api
+      .tree()
+      .then((r) => setPages(r.pages))
+      .catch(() => setPages([]));
+  }, []);
+
+  function renderText(text: string) {
+    return linkify(stripMd(text), pages).map((seg, i) =>
+      seg.path ? (
+        <span
+          key={i}
+          className="loop-link"
+          title={`打开 ${seg.path}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpenPage(seg.path!);
+          }}
+        >
+          {seg.text}
+        </span>
+      ) : (
+        <span key={i}>{seg.text}</span>
+      ),
+    );
+  }
+
+  async function remove(item: LoopItem) {
+    setBusy(item.line);
+    try {
+      const r = await api.removeLoop(item.line, item.raw);
+      onToast(r.removed > 1 ? `已移出（含 ${r.removed - 1} 个子项）` : "已移出未闭环清单");
+      await load();
+    } catch (e) {
+      onToast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setBusy(null);
+    }
+  }
 
   async function classify(item: LoopItem, tag: GtdTag | null) {
     setBusy(item.line);
@@ -177,7 +258,7 @@ export function GtdBoard({ onToast }: Props) {
         ) : (
           inbox.map((item) => (
             <div className={`clarify-card depth-${item.depth}`} key={item.line}>
-              <div className="clarify-text">{stripMd(item.text)}</div>
+              <div className="clarify-text">{renderText(item.text)}</div>
               {item.group && <div className="clarify-src">来自：{item.group}</div>}
               <div className="clarify-actions">
                 {BUCKETS.map((b) => (
@@ -256,15 +337,57 @@ export function GtdBoard({ onToast }: Props) {
                 ) : (
                   <span className="no-check" title="非行动项，没有完成态" />
                 )}
-                <span className="loop-text">{stripMd(item.text)}</span>
-                <button
-                  className="act tiny"
-                  disabled={busy === item.line}
-                  title="重新厘清（放回收集箱）"
-                  onClick={() => void classify(item, null)}
-                >
-                  重分类
-                </button>
+                <span className="loop-text">{renderText(item.text)}</span>
+                <span className="row-actions">
+                  {b.tag === "wait" && (
+                    <button
+                      className="act tiny tag-next"
+                      disabled={busy === item.line}
+                      title="结果已到，转成可执行的下一步行动"
+                      onClick={() => void classify(item, "next")}
+                    >
+                      结果已到
+                    </button>
+                  )}
+                  {b.tag === "someday" && (
+                    <button
+                      className="act tiny tag-next"
+                      disabled={busy === item.line}
+                      title="现在要做了，转成下一步行动"
+                      onClick={() => void classify(item, "next")}
+                    >
+                      现在做
+                    </button>
+                  )}
+                  {b.tag === "project" && (
+                    <button
+                      className="act tiny tag-next"
+                      disabled={busy === item.line}
+                      title="已拆出单步任务，转成下一步行动"
+                      onClick={() => void classify(item, "next")}
+                    >
+                      已拆解
+                    </button>
+                  )}
+                  {b.tag === "ref" && (
+                    <button
+                      className="act tiny reject"
+                      disabled={busy === item.line}
+                      title="已归入 wiki 页，从未闭环清单移出"
+                      onClick={() => void remove(item)}
+                    >
+                      已归档移出
+                    </button>
+                  )}
+                  <button
+                    className="act tiny"
+                    disabled={busy === item.line}
+                    title="重新厘清（放回收集箱）"
+                    onClick={() => void classify(item, null)}
+                  >
+                    重分类
+                  </button>
+                </span>
               </div>
             ))}
           </section>

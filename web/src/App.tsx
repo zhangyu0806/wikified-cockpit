@@ -72,7 +72,7 @@ export function App() {
           !error && <div className="loading">加载中…</div>
         ))}
 
-      {tab === "gtd" && <GtdBoard onToast={showToast} />}
+      {tab === "gtd" && <GtdBoard onToast={showToast} onOpenPage={openPage} />}
 
       {tab === "reader" && <Reader initialPath={readerPath} onNavigate={setReaderPath} />}
 
