@@ -7,6 +7,8 @@ WORK=$(mktemp -d "${TMPDIR:-/tmp}/cockpit-installer.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 
 TEST_HOME="$WORK/home"
+TEST_CONFIG="$TEST_HOME/.config"
+TEST_STATE="$TEST_HOME/.local/state"
 FAKE_BIN="$WORK/bin"
 ROOT="$WORK/wiki"
 mkdir -p "$TEST_HOME/.bun/bin" "$FAKE_BIN" "$ROOT"
@@ -25,10 +27,11 @@ printf 'yes\n'
 EOF
 chmod +x "$TEST_HOME/.bun/bin/bun" "$FAKE_BIN/systemctl" "$FAKE_BIN/loginctl"
 
-env HOME="$TEST_HOME" PATH="$FAKE_BIN:/usr/bin:/bin" LLM_WIKI_ROOT="$ROOT" \
+env HOME="$TEST_HOME" XDG_CONFIG_HOME="$TEST_CONFIG" XDG_STATE_HOME="$TEST_STATE" \
+  PATH="$FAKE_BIN:/usr/bin:/bin" LLM_WIKI_ROOT="$ROOT" \
   "$REPO/install-service.sh" install >/dev/null
 
-UNIT="$TEST_HOME/.config/systemd/user/wikified-cockpit.service"
+UNIT="$TEST_CONFIG/systemd/user/wikified-cockpit.service"
 [[ -f "$UNIT" ]] || { printf 'FAIL  installer 未生成 unit\n'; exit 1; }
 grep -Fq "ExecStart=$TEST_HOME/.bun/bin/bun run $REPO/server/index.ts" "$UNIT" \
   || { printf 'FAIL  unit 未使用实际 Bun 路径\n'; exit 1; }
