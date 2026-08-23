@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type MouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import MarkdownIt from "markdown-it";
 import { api } from "../api/client";
 
@@ -50,6 +50,7 @@ export function Reader({ initialPath, onNavigate, onBack }: Props) {
   const [err, setErr] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const activeRef = useRef<HTMLAnchorElement | null>(null);
 
   useEffect(() => {
     api
@@ -60,7 +61,21 @@ export function Reader({ initialPath, onNavigate, onBack }: Props) {
 
   useEffect(() => {
     setPath(initialPath);
+    if (initialPath) {
+      const grp = groupOf(initialPath);
+      setCollapsed((prev) => {
+        if (!prev.has(grp)) return prev;
+        const next = new Set(prev);
+        next.delete(grp);
+        return next;
+      });
+    }
   }, [initialPath]);
+
+  // 文件树有 270+ 条，选中项常在滚动区外；跳转后把它滚进视野。
+  useEffect(() => {
+    activeRef.current?.scrollIntoView({ block: "nearest" });
+  }, [path, collapsed, filter]);
 
   useEffect(() => {
     if (!path) {
@@ -132,15 +147,22 @@ export function Reader({ initialPath, onNavigate, onBack }: Props) {
         ) : (
           grouped.map(([grp, ps]) => {
             const isCollapsed = collapsed.has(grp) && !filter.trim();
+            const hasActive = path !== null && ps.includes(path);
             return (
               <div key={grp}>
-                <button className="grp" onClick={() => toggleGroup(grp)}>
+                <button className={`grp ${hasActive ? "has-active" : ""}`} onClick={() => toggleGroup(grp)}>
                   <span className="grp-caret">{isCollapsed ? "▸" : "▾"}</span>
                   {grp} <span className="grp-count">{ps.length}</span>
                 </button>
                 {!isCollapsed &&
                   ps.map((p) => (
-                    <a key={p} className={p === path ? "active" : ""} onClick={() => open(p)} title={p}>
+                    <a
+                      key={p}
+                      ref={p === path ? activeRef : null}
+                      className={p === path ? "active" : ""}
+                      onClick={() => open(p)}
+                      title={p}
+                    >
                       {leafOf(p)}
                     </a>
                   ))}
