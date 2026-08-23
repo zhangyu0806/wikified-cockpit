@@ -914,3 +914,113 @@ button.act.back-btn {
   border-color: var(--red);
   color: var(--red);
 }
+
+@media (max-width: 720px) {
+  .app {
+    max-width: none;
+    padding: 0 12px 48px;
+  }
+
+  .topbar {
+    flex-wrap: wrap;
+    gap: 8px 10px;
+    padding: 12px 0;
+  }
+
+  .topbar h1 {
+    font-size: 16px;
+    white-space: nowrap;
+  }
+
+  .tab {
+    padding: 6px 10px;
+  }
+
+  .cadence {
+    flex-basis: 100%;
+    margin-left: 0;
+    text-align: right;
+  }
+
+  .panel {
+    padding: 14px 12px;
+  }
+
+  .actions,
+  .add-row,
+  .gtd-head,
+  .reader-head,
+  .detail-head {
+    flex-wrap: wrap;
+  }
+
+  .gtd-head {
+    flex-direction: column;
+  }
+
+  .add-row input {
+    flex-basis: 100%;
+    min-width: 0;
+  }
+
+  .loop-row {
+    flex-wrap: wrap;
+  }
+
+  .loop-row.depth-1 {
+    padding-left: 20px;
+  }
+
+  .loop-row.depth-2 {
+    padding-left: 32px;
+  }
+
+  .loop-row.depth-3 {
+    padding-left: 44px;
+  }
+
+  .loop-text {
+    flex: 1;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .row-actions {
+    width: 100%;
+    margin-left: 22px;
+    flex-wrap: wrap;
+    opacity: 1;
+  }
+
+  .reader {
+    display: block;
+  }
+
+  .filetree {
+    position: static;
+    max-height: min(42vh, 340px);
+    margin-bottom: 20px;
+    padding: 0 0 12px;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .markdown {
+    max-width: 100%;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .state-box {
+    margin-top: 0;
+    padding: 22px 18px;
+  }
+
+  .toast {
+    right: 12px;
+    bottom: 12px;
+    left: 12px;
+    transform: none;
+    text-align: center;
+  }
+}
