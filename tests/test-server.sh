@@ -13,7 +13,8 @@ WORK=$(mktemp -d "${TMPDIR:-/tmp}/cockpit-test.XXXXXX")
 trap 'kill "${SRV:-0}" 2>/dev/null || true; rm -rf "$WORK"' EXIT
 
 ROOT="$WORK/wiki"
-mkdir -p "$ROOT/wiki/context" "$ROOT/memory/events" "$ROOT/raw/notes"
+FAKE_BIN="$WORK/bin"
+mkdir -p "$ROOT/wiki/context" "$ROOT/memory/events" "$ROOT/raw/notes" "$FAKE_BIN"
 printf '# SCHEMA\n' >"$ROOT/SCHEMA.md"
 printf '# index\n[[llm-wiki]]\n' >"$ROOT/wiki/index.md"
 printf '# secret page\n' >"$ROOT/wiki/context/CRITICAL_FACTS.md"
@@ -21,6 +22,16 @@ printf '# Open Loops\n## 组A\n- 待办一\n- ✅ 已完成\n' >"$ROOT/wiki/cont
 printf '# outside\n' >"$WORK/outside.md"
 ln -s "$WORK/outside.md" "$ROOT/wiki/outside-link.md"
 ln -s "$WORK/outside.md" "$ROOT/raw/notes/outside-link.md"
+
+cat >"$FAKE_BIN/llm-wiki-review" <<'EOF'
+#!/usr/bin/env bash
+printf '{"corrections":[],"promote_notes":[],"raw_uncompiled":[],"expired_events":[]}\n'
+EOF
+cat >"$FAKE_BIN/llm-wiki-correct" <<'EOF'
+#!/usr/bin/env bash
+printf 'ok\n'
+EOF
+chmod +x "$FAKE_BIN/llm-wiki-review" "$FAKE_BIN/llm-wiki-correct"
 
 cat >"$ROOT/memory/events/2020-01.jsonl" <<'EOF'
 {"schema_version":"llm-wiki-memory-event/v2","id":"aaaaaaaaaaaaaaaa","timestamp":"2020-01-01T00:00:00+00:00","type":"fact","project":"old","summary":"very old fact","confidence":0.7,"half_life_days":90,"lifecycle":"active","valid_from":"2020-01-01T00:00:00+00:00"}
@@ -30,14 +41,25 @@ cat >"$ROOT/memory/events/2999-01.jsonl" <<'EOF'
 EOF
 
 PORT=4199
-COCKPIT_PORT="$PORT" LLM_WIKI_ROOT="$ROOT" bun run "$REPO/server/index.ts" >"$WORK/server.log" 2>&1 &
+COCKPIT_PORT="$PORT" LLM_WIKI_ROOT="$ROOT" LLM_WIKI_BIN_TARGET="$FAKE_BIN" \
+  bun run "$REPO/server/index.ts" >"$WORK/server.log" 2>&1 &
 SRV=$!
 
 # 等端口就绪
+READY=0
 for _ in $(seq 1 30); do
-  curl -sf "http://127.0.0.1:$PORT/api/tree" >/dev/null 2>&1 && break
+  if curl -sf "http://127.0.0.1:$PORT/api/tree" >/dev/null 2>&1; then
+    READY=1
+    break
+  fi
   sleep 0.2
 done
+
+if [ "$READY" -ne 1 ]; then
+  printf 'FAIL  server did not become ready\n' >&2
+  cat "$WORK/server.log" >&2
+  exit 1
+fi
 
 pass() { printf 'PASS  %s\n' "$1"; }
 fail() { printf 'FAIL  %s\n' "$1"; exit 1; }
