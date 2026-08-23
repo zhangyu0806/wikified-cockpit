@@ -1,8 +1,14 @@
 # Wikified Cockpit
 
+[![CI](https://github.com/zhangyu0806/wikified-cockpit/actions/workflows/ci.yml/badge.svg)](https://github.com/zhangyu0806/wikified-cockpit/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
 [Wikified](https://github.com/zhangyu0806/wikified) 记忆系统的**本机 Web 界面**：把复盘、
 审批、GTD 从命令行变成点一下就完成。浏览器访问本机服务，读你自己的 Markdown 库，
 数据不出本机。
+
+Cockpit 是 Wikified 的官方行动界面，和 CLI 一起以 MIT 许可证开源；应用代码公开，
+你的 `~/llm-wiki` 内容仍只保存在自己的机器或私有数据仓库中。
 
 > **它不是笔记软件。** 没有 Wikified 数据库（`~/llm-wiki`）它无法运行——
 > 它是那套 CLI 的界面，不是独立产品。
@@ -54,10 +60,12 @@ Cockpit 是 `llm-wiki-*` CLI 的**薄壳**，不重实现记忆逻辑：
 这个 app 会读整个 `~/llm-wiki` 并执行本机 CLI，是敏感面。硬性设计：
 
 - **只绑 `127.0.0.1`**，绝不 `0.0.0.0`。WSL2 下 Windows 经 localhost 转发访问。
+- **浏览器请求门禁**：只接受 `localhost` / `127.0.0.1` Host；写请求额外校验
+  Origin 与 `application/json`，阻止 DNS rebinding、跨站 blind POST 和点击劫持。
 - **白名单执行**：只跑固定的 `llm-wiki-review`/`llm-wiki-correct`，参数以数组传给
   `execFile`（不经 shell），从根上杜绝命令注入。
-- **路径囚笼**：MD 只读端点把路径 resolve 后必须仍在 `~/llm-wiki` 内，且拒绝 `secure-notes`、
-  点目录、非 `.md`。
+- **路径囚笼**：MD 端点同时校验 lexical path 与 `realpath`，拒绝 `..`、symlink 逃逸、
+  `secure-notes`、点目录和非 `.md`。
 - **写操作范围受限**，共三处，每处都有独立边界：
   - `wiki/context/open-loops.md` —— 路径服务端硬编码，**不接受调用方传路径**
   - `raw/**.md` 的 frontmatter `status` —— 路径必须 resolve 在 `raw/` 内，**正文一律不动**，
@@ -69,9 +77,9 @@ Cockpit 是 `llm-wiki-*` CLI 的**薄壳**，不重实现记忆逻辑：
   避免并发编辑时改错行。
 - **不碰 secret**：不读 `~/secure-notes`；沿用 CLI 自身的脱敏。
 
-上述边界由 `tests/test-server.sh` 锁定（19 项：路径逃逸、非 md、注入型 id、乐观锁冲突、
-未知分组、空内容/含换行、非法 status、raw 外路径、event 只改命中行、未知 event id、
-以及「传 path 参数也无法影响白名单外文件」）。
+上述边界由隔离测试锁定，包括路径与 symlink 逃逸、Host/Origin 写入门禁、非 md、
+注入型 id、乐观锁冲突、非法 status、event 精确改写、installer 路径解析，以及
+「传 path 参数也无法影响白名单外文件」。
 
 ## 用法
 
@@ -140,6 +148,12 @@ bun run dev:web         # 终端 2：Vite :4176（代理 /api 到后端）
 ## 测试
 
 ```bash
-bun run typecheck        # server + web 两套 tsconfig
-bash tests/test-server.sh # 冒烟 + 安全边界（自建隔离库，不碰真实数据）
+bun run check             # typecheck + build + 全部测试
+bun run test:server       # API 冒烟与安全边界（自建隔离库，不碰真实数据）
+bun run test:installer    # 隔离 HOME 验证 systemd unit 生成
+bun run test:reader       # Markdown / wikilink 安全渲染
 ```
+
+## License
+
+[MIT](LICENSE)

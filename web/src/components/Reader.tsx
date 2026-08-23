@@ -8,29 +8,55 @@ interface Props {
   onBack: () => void;
 }
 
-const md = new MarkdownIt({ html: false, linkify: true, breaks: false });
-
 function slugToPath(target: string, pages: string[]): string | null {
-  const needle = target.trim().toLowerCase();
+  const normalize = (value: string) =>
+    value.trim().replace(/\\/g, "/").replace(/^\/+/, "").replace(/\.md$/i, "").toLowerCase();
+  const needle = normalize(target);
+
+  const exact = pages.find((page) => normalize(page) === needle);
+  if (exact) return exact;
+
+  const wikiRelativeNeedle = needle.replace(/^wiki\//, "");
+  const relative = pages.find((page) => normalize(page).replace(/^wiki\//, "") === wikiRelativeNeedle);
+  if (relative) return relative;
+
   for (const p of pages) {
-    const base = p.replace(/^wiki\//, "").replace(/\.md$/, "");
-    if (base.toLowerCase() === needle) return p;
-    const leaf = base.split("/").pop() ?? base;
-    if (leaf.toLowerCase() === needle) return p;
+    const leaf = normalize(p).split("/").pop();
+    if (leaf === wikiRelativeNeedle) return p;
   }
   return null;
 }
 
-function renderMarkdown(content: string, pages: string[]): string {
-  const withLinks = content.replace(/\[\[([^\]]+)\]\]/g, (_m, inner: string) => {
-    const parts = inner.split("|");
-    const target = parts[0] ?? inner;
-    const label = parts[1] ?? target;
-    const resolved = slugToPath(target, pages);
-    const cls = resolved ? "wikilink" : "wikilink missing";
-    return `<a class="${cls}" data-wikipath="${resolved ?? ""}">${label}</a>`;
+export function renderMarkdown(content: string, pages: string[]): string {
+  const parser = new MarkdownIt({ html: false, linkify: true, breaks: false });
+
+  parser.inline.ruler.before("link", "wikilink", (state, silent) => {
+    if (!state.src.startsWith("[[", state.pos)) return false;
+    const end = state.src.indexOf("]]", state.pos + 2);
+    if (end === -1) return false;
+
+    const inner = state.src.slice(state.pos + 2, end);
+    const divider = inner.indexOf("|");
+    const target = (divider === -1 ? inner : inner.slice(0, divider)).trim();
+    const label = (divider === -1 ? target : inner.slice(divider + 1)).trim() || target;
+    if (!target) return false;
+
+    if (!silent) {
+      const token = state.push("wikilink", "a", 0);
+      token.meta = { label, resolved: slugToPath(target, pages) };
+    }
+    state.pos = end + 2;
+    return true;
   });
-  return md.render(withLinks);
+
+  parser.renderer.rules.wikilink = (tokens, idx) => {
+    const meta = tokens[idx]?.meta as { label: string; resolved: string | null } | undefined;
+    if (!meta) return "";
+    const cls = meta.resolved ? "wikilink" : "wikilink missing";
+    return `<a href="#" class="${cls}" data-wikipath="${parser.utils.escapeHtml(meta.resolved ?? "")}">${parser.utils.escapeHtml(meta.label)}</a>`;
+  };
+
+  return parser.render(content);
 }
 
 function groupOf(path: string): string {

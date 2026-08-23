@@ -2,14 +2,24 @@
   "name": "wikified-cockpit",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "description": "本机复盘 + GTD 驾驶舱 for Wikified —— CLI 的薄壳,不重实现逻辑。Obsidian 管深度阅读,本 app 管行动。",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zhangyu0806/wikified-cockpit.git"
+  },
   "scripts": {
     "dev:web": "vite",
     "build": "vite build",
     "server": "bun run server/index.ts",
     "start": "bun run server/index.ts",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p web/tsconfig.json"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p web/tsconfig.json",
+    "test:server": "bash tests/test-server.sh",
+    "test:installer": "bash tests/test-install-service.sh",
+    "test:reader": "bun test tests/reader.test.ts",
+    "test": "bun run test:server && bun run test:installer && bun run test:reader",
+    "check": "bun run typecheck && bun run build && bun run test"
   },
   "dependencies": {
     "markdown-it": "^14.1.0",

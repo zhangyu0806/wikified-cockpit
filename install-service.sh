@@ -8,6 +8,22 @@ UNIT_NAME=wikified-cockpit.service
 UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 LOG_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/wikified-cockpit"
 
+resolve_bun() {
+  if command -v bun >/dev/null 2>&1; then
+    command -v bun
+    return 0
+  fi
+  if [[ -x "$HOME/.bun/bin/bun" ]]; then
+    printf '%s\n' "$HOME/.bun/bin/bun"
+    return 0
+  fi
+  return 1
+}
+
+sed_replacement() {
+  printf '%s' "$1" | sed 's/[&|\\]/\\&/g'
+}
+
 usage() {
   cat <<EOF
 用法: ./install-service.sh [install|uninstall|status|logs]
@@ -20,10 +36,11 @@ EOF
 }
 
 cmd_install() {
-  if ! command -v bun >/dev/null; then
+  local bun_bin
+  bun_bin=$(resolve_bun) || {
     echo "找不到 bun。安装：curl -fsSL https://bun.sh/install | bash"
     exit 1
-  fi
+  }
   if ! command -v systemctl >/dev/null; then
     cat <<'EOM'
 此系统没有 systemd（macOS 或精简容器），无法装成 systemd 服务。
@@ -38,9 +55,9 @@ EOM
     exit 1
   fi
 
-  [ -d "$REPO/node_modules" ] || (cd "$REPO" && bun install)
+  [ -d "$REPO/node_modules" ] || (cd "$REPO" && "$bun_bin" install)
   echo "构建前端…"
-  (cd "$REPO" && bun run build >/dev/null)
+  (cd "$REPO" && "$bun_bin" run build >/dev/null)
 
   # 数据根不存在就别装——服务必然起不来，且此处的报错比服务日志清楚得多。
   # 这个检查必须在动既有 unit 之前，否则重装失败会毁掉用户已装好的服务。
@@ -56,7 +73,10 @@ EOM
   mkdir -p "$UNIT_DIR" "$LOG_DIR"
   # 先写临时文件、装配完再原子替换，避免中途失败留下半成品 unit。
   TMP_UNIT=$(mktemp "$UNIT_DIR/.$UNIT_NAME.XXXXXX")
-  sed "s|%h/wikified-cockpit|$REPO|g" "$REPO/$UNIT_NAME" > "$TMP_UNIT"
+  repo_sed=$(sed_replacement "$REPO")
+  bun_sed=$(sed_replacement "$bun_bin")
+  sed -e "s|@REPO@|$repo_sed|g" -e "s|@BUN_BIN@|$bun_sed|g" \
+    "$REPO/$UNIT_NAME" > "$TMP_UNIT"
 
   # 安装时的 LLM_WIKI_ROOT / COCKPIT_PORT 要写进 unit，否则服务起来读不到自定义位置。
   if [ -n "${LLM_WIKI_ROOT:-}" ]; then

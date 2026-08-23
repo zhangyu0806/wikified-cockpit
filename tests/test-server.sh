@@ -2,6 +2,12 @@
 # Cockpit server 冒烟 + 安全边界测试。自建隔离 wiki 根，绝不碰真实 ~/llm-wiki。
 set -euo pipefail
 
+# Loopback requests must exercise Cockpit directly even when the developer shell
+# has HTTP_PROXY configured. A forged Host header can otherwise be routed by curl
+# through that proxy before the request ever reaches this server.
+export NO_PROXY="127.0.0.1,localhost"
+export no_proxy="$NO_PROXY"
+
 REPO=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/cockpit-test.XXXXXX")
 trap 'kill "${SRV:-0}" 2>/dev/null || true; rm -rf "$WORK"' EXIT
@@ -12,6 +18,9 @@ printf '# SCHEMA\n' >"$ROOT/SCHEMA.md"
 printf '# index\n[[llm-wiki]]\n' >"$ROOT/wiki/index.md"
 printf '# secret page\n' >"$ROOT/wiki/context/CRITICAL_FACTS.md"
 printf '# Open Loops\n## 组A\n- 待办一\n- ✅ 已完成\n' >"$ROOT/wiki/context/open-loops.md"
+printf '# outside\n' >"$WORK/outside.md"
+ln -s "$WORK/outside.md" "$ROOT/wiki/outside-link.md"
+ln -s "$WORK/outside.md" "$ROOT/raw/notes/outside-link.md"
 
 cat >"$ROOT/memory/events/2020-01.jsonl" <<'EOF'
 {"schema_version":"llm-wiki-memory-event/v2","id":"aaaaaaaaaaaaaaaa","timestamp":"2020-01-01T00:00:00+00:00","type":"fact","project":"old","summary":"very old fact","confidence":0.7,"half_life_days":90,"lifecycle":"active","valid_from":"2020-01-01T00:00:00+00:00"}
@@ -43,6 +52,35 @@ curl -sf "http://127.0.0.1:$PORT/api/review" \
 # 2. 路径逃逸 -> 403
 [ "$(code "http://127.0.0.1:$PORT/api/page?path=../../../etc/passwd")" = "403" ] \
   && pass "../ 逃逸被拒 403" || fail "path traversal not blocked"
+
+# 2b. WIKI_ROOT 内的 symlink 也不能跳到外部文件
+[ "$(code "http://127.0.0.1:$PORT/api/page?path=wiki/outside-link.md")" = "403" ] \
+  && pass "symlink 读取逃逸被拒 403" || fail "symlink read escape not blocked"
+SYMWRITE=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+  "http://127.0.0.1:$PORT/api/raw/status" \
+  -H 'content-type: application/json' -d '{"path":"raw/notes/outside-link.md","status":"compiled"}')
+[ "$SYMWRITE" = "403" ] && ! grep -q '^status:' "$WORK/outside.md" \
+  && pass "symlink 写入逃逸被拒 403" || fail "symlink write escape not blocked ($SYMWRITE)"
+
+# 2c. Host / Origin / content-type 防 DNS rebinding 与浏览器 blind POST
+BADHOST=$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: evil.example' \
+  "http://127.0.0.1:$PORT/api/tree")
+BADORIGIN=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+  "http://127.0.0.1:$PORT/api/open-loops/add" \
+  -H 'Origin: https://evil.example' -H 'content-type: application/json' \
+  -d '{"group":"组A","text":"csrf-probe"}')
+BADTYPE=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+  "http://127.0.0.1:$PORT/api/open-loops/add" \
+  -H 'content-type: text/plain' -d '{"group":"组A","text":"csrf-probe"}')
+[ "$BADHOST" = "403" ] && [ "$BADORIGIN" = "403" ] && [ "$BADTYPE" = "415" ] \
+  && ! grep -q 'csrf-probe' "$ROOT/wiki/context/open-loops.md" \
+  && pass "Host/Origin/JSON 写入门禁生效" || fail "request guards ($BADHOST/$BADORIGIN/$BADTYPE)"
+
+HEADERS="$WORK/static-headers.txt"
+curl -sD "$HEADERS" -o /dev/null "http://127.0.0.1:$PORT/"
+grep -Eqi "^content-security-policy:.*frame-ancestors 'none'" "$HEADERS" \
+  && grep -Eqi '^x-frame-options: DENY' "$HEADERS" \
+  && pass "静态页面 CSP / 防嵌入响应头生效" || fail "static security headers missing"
 
 # 3. 非 .md -> 403
 [ "$(code "http://127.0.0.1:$PORT/api/page?path=SCHEMA")" = "403" ] \

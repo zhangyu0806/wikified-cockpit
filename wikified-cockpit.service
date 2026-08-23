@@ -5,9 +5,9 @@ After=default.target
 
 [Service]
 Type=simple
-WorkingDirectory=%h/wikified-cockpit
+WorkingDirectory=@REPO@
 Environment=COCKPIT_PORT=4177
-ExecStart=%h/.local/bin/bun run %h/wikified-cockpit/server/index.ts
+ExecStart=@BUN_BIN@ run @REPO@/server/index.ts
 Restart=on-failure
 RestartSec=3
 

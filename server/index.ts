@@ -14,17 +14,25 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { homedir } from "node:os";
-import { join, resolve, sep, extname } from "node:path";
+import { join, resolve, relative, sep, extname } from "node:path";
 import { readFile, readdir, stat, writeFile, copyFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 
 const execFileAsync = promisify(execFile);
 
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.COCKPIT_PORT || 4177);
 const WIKI_ROOT = resolve(process.env.LLM_WIKI_ROOT || join(homedir(), "llm-wiki"));
+const WIKI_ROOT_REAL = existsSync(WIKI_ROOT) ? realpathSync(WIKI_ROOT) : WIKI_ROOT;
 const BIN_DIR = process.env.LLM_WIKI_BIN_TARGET || join(homedir(), ".local", "bin");
 const DIST_DIR = resolve(join(import.meta.dir, "..", "dist"));
+const ALLOWED_HOSTS = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`]);
+const ALLOWED_ORIGINS = new Set([
+  `http://127.0.0.1:${PORT}`,
+  `http://localhost:${PORT}`,
+  "http://127.0.0.1:4176",
+  "http://localhost:4176",
+]);
 
 // 白名单:命令名 -> 允许的绝对路径。参数在各 handler 内校验后以数组传入。
 const CLI = {
@@ -38,12 +46,42 @@ const CLI_TIMEOUT_MS = 15_000;
 function jsonResponse(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { "content-type": "application/json; charset=utf-8" },
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+      "x-content-type-options": "nosniff",
+      "x-frame-options": "DENY",
+    },
   });
 }
 
 function errorResponse(message: string, status = 400): Response {
   return jsonResponse({ error: message }, status);
+}
+
+/**
+ * localhost 不是授权边界：恶意网页可对本机端口发 blind POST，DNS rebinding
+ * 还能把攻击域名解析到 127.0.0.1。所有请求先校验 Host；写请求还必须来自本机
+ * 页面（或没有 Origin 的 curl/CLI）并使用 application/json。
+ */
+function requestGuard(req: Request): Response | null {
+  const host = (req.headers.get("host") ?? "").toLowerCase();
+  if (!ALLOWED_HOSTS.has(host)) return errorResponse("不受信任的 Host", 403);
+
+  if (req.method === "POST") {
+    const origin = req.headers.get("origin");
+    if (origin && !ALLOWED_ORIGINS.has(origin.toLowerCase())) {
+      return errorResponse("不受信任的 Origin", 403);
+    }
+    const contentType = (req.headers.get("content-type") ?? "")
+      .split(";", 1)[0]
+      ?.trim()
+      .toLowerCase();
+    if (contentType !== "application/json") {
+      return errorResponse("写操作只接受 application/json", 415);
+    }
+  }
+  return null;
 }
 
 /** 执行白名单 CLI；args 必须是已校验的字符串数组，绝不经过 shell。 */
@@ -69,6 +107,10 @@ function isValidCorrectionId(id: unknown): id is string {
   return typeof id === "string" && /^[0-9a-f]{12}$/.test(id);
 }
 
+function isInside(root: string, candidate: string): boolean {
+  return candidate === root || candidate.startsWith(root + sep);
+}
+
 /**
  * 把用户给的相对路径 resolve 到 WIKI_ROOT 下，并确保:
  *   - 结果仍在 WIKI_ROOT 内(防 ../ 逃逸)
@@ -79,13 +121,28 @@ function isValidCorrectionId(id: unknown): id is string {
 function safeWikiPath(relPath: string): string | null {
   if (typeof relPath !== "string" || relPath.length === 0) return null;
   if (relPath.includes("\0")) return null;
-  const abs = resolve(WIKI_ROOT, relPath);
+  const requested = resolve(WIKI_ROOT, relPath);
   // 必须严格在 WIKI_ROOT 内(加 sep 防止 /foo 前缀匹配 /foobar)
-  if (abs !== WIKI_ROOT && !abs.startsWith(WIKI_ROOT + sep)) return null;
-  if (extname(abs).toLowerCase() !== ".md") return null;
-  const lower = abs.toLowerCase();
-  if (lower.includes("secure-notes") || lower.includes(`${sep}.`)) return null;
-  return abs;
+  if (!isInside(WIKI_ROOT, requested)) return null;
+  if (extname(requested).toLowerCase() !== ".md") return null;
+
+  const rel = relative(WIKI_ROOT, requested);
+  const parts = rel.split(sep);
+  if (parts.some((part) => part.startsWith(".") || part.toLowerCase().includes("secure-notes"))) {
+    return null;
+  }
+
+  // realpath 同时锁住文件本身和任意父目录 symlink。只做 lexical prefix 检查会让
+  // wiki/link.md -> /outside/private.md 绕过路径囚笼。
+  if (!existsSync(requested)) return resolve(WIKI_ROOT_REAL, rel);
+  try {
+    const actual = realpathSync(requested);
+    const expected = resolve(WIKI_ROOT_REAL, rel);
+    if (!isInside(WIKI_ROOT_REAL, actual) || actual !== expected) return null;
+    return actual;
+  } catch {
+    return null;
+  }
 }
 
 // ---------- API handlers ----------
@@ -115,13 +172,13 @@ async function handleResolve(req: Request): Promise<Response> {
   return jsonResponse({ ok: true, id, status: st, message: r.stdout.trim() });
 }
 
-function openLoopsPath(): string {
-  return join(WIKI_ROOT, "wiki", "context", "open-loops.md");
+function openLoopsPath(): string | null {
+  return safeWikiPath("wiki/context/open-loops.md");
 }
 
 async function handleOpenLoops(): Promise<Response> {
   const p = openLoopsPath();
-  if (!existsSync(p)) return jsonResponse({ exists: false, content: "" });
+  if (!p || !existsSync(p)) return jsonResponse({ exists: false, content: "" });
   const content = await readFile(p, "utf-8");
   return jsonResponse({ exists: true, content });
 }
@@ -132,9 +189,8 @@ async function handleOpenLoops(): Promise<Response> {
  */
 async function writeOpenLoops(lines: string[]): Promise<void> {
   const p = openLoopsPath();
-  if (existsSync(p)) {
-    await copyFile(p, join(WIKI_ROOT, "wiki", "context", ".open-loops.bak"));
-  }
+  if (!p || !existsSync(p)) throw new Error("open-loops.md 不存在或路径不安全");
+  await copyFile(p, join(WIKI_ROOT_REAL, "wiki", "context", ".open-loops.bak"));
   await writeFile(p, lines.join("\n"), "utf-8");
 }
 
@@ -158,7 +214,7 @@ async function handleToggleLoop(req: Request): Promise<Response> {
   if (typeof expect !== "string") return errorResponse("缺少 expect（该行当前文本）");
 
   const p = openLoopsPath();
-  if (!existsSync(p)) return errorResponse("open-loops.md 不存在", 404);
+  if (!p || !existsSync(p)) return errorResponse("open-loops.md 不存在或路径不安全", 404);
   const lines = (await readFile(p, "utf-8")).split("\n");
   const target = lines[line];
   if (target === undefined) return errorResponse("行号越界", 409);
@@ -200,7 +256,7 @@ async function handleClassifyLoop(req: Request): Promise<Response> {
   }
 
   const p = openLoopsPath();
-  if (!existsSync(p)) return errorResponse("open-loops.md 不存在", 404);
+  if (!p || !existsSync(p)) return errorResponse("open-loops.md 不存在或路径不安全", 404);
   const lines = (await readFile(p, "utf-8")).split("\n");
   const target = lines[line];
   if (target === undefined) return errorResponse("行号越界", 409);
@@ -230,7 +286,7 @@ async function handleLoopContext(url: URL): Promise<Response> {
   if (!Number.isInteger(lineParam) || lineParam < 0) return errorResponse("非法行号");
 
   const p = openLoopsPath();
-  if (!existsSync(p)) return errorResponse("open-loops.md 不存在", 404);
+  if (!p || !existsSync(p)) return errorResponse("open-loops.md 不存在或路径不安全", 404);
   const lines = (await readFile(p, "utf-8")).split("\n");
   const target = lines[lineParam];
   if (target === undefined) return errorResponse("行号越界", 404);
@@ -310,7 +366,7 @@ async function handleRemoveLoop(req: Request): Promise<Response> {
   if (typeof expect !== "string") return errorResponse("缺少 expect（该行当前文本）");
 
   const p = openLoopsPath();
-  if (!existsSync(p)) return errorResponse("open-loops.md 不存在", 404);
+  if (!p || !existsSync(p)) return errorResponse("open-loops.md 不存在或路径不安全", 404);
   const lines = (await readFile(p, "utf-8")).split("\n");
   const target = lines[line];
   if (target === undefined) return errorResponse("行号越界", 409);
@@ -352,7 +408,7 @@ async function handleRawStatus(req: Request): Promise<Response> {
     return errorResponse(`status 必须是 ${[...RAW_STATUSES].join(" / ")}`);
   }
   const abs = safeWikiPath(typeof rel === "string" ? rel : "");
-  const rawDir = join(WIKI_ROOT, "raw");
+  const rawDir = join(WIKI_ROOT_REAL, "raw");
   if (!abs || (abs !== rawDir && !abs.startsWith(rawDir + sep))) {
     return errorResponse("只能修改 raw/ 下的 md", 403);
   }
@@ -395,9 +451,20 @@ async function handleDeprecateEvent(req: Request): Promise<Response> {
     return errorResponse("非法 event id");
   }
 
-  const eventsDir = join(WIKI_ROOT, "memory", "events");
-  if (!existsSync(eventsDir)) return errorResponse("events 目录不存在", 404);
-  const files = (await readdir(eventsDir)).filter((f) => f.endsWith(".jsonl"));
+  const requestedEventsDir = join(WIKI_ROOT, "memory", "events");
+  if (!existsSync(requestedEventsDir)) return errorResponse("events 目录不存在", 404);
+  let eventsDir: string;
+  try {
+    eventsDir = realpathSync(requestedEventsDir);
+  } catch {
+    return errorResponse("events 目录路径不安全", 403);
+  }
+  if (eventsDir !== join(WIKI_ROOT_REAL, "memory", "events")) {
+    return errorResponse("events 目录路径不安全", 403);
+  }
+  const files = (await readdir(eventsDir, { withFileTypes: true }))
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".jsonl"))
+    .map((entry) => entry.name);
 
   for (const f of files) {
     const abs = join(eventsDir, f);
@@ -439,7 +506,7 @@ async function handleAddLoop(req: Request): Promise<Response> {
   if (typeof group !== "string") return errorResponse("缺少分组名");
 
   const p = openLoopsPath();
-  if (!existsSync(p)) return errorResponse("open-loops.md 不存在", 404);
+  if (!p || !existsSync(p)) return errorResponse("open-loops.md 不存在或路径不安全", 404);
   const lines = (await readFile(p, "utf-8")).split("\n");
 
   let insertAt = -1;
@@ -488,12 +555,12 @@ async function handleTree(): Promise<Response> {
       if (e.isDirectory()) {
         await walk(full);
       } else if (e.isFile() && extname(e.name).toLowerCase() === ".md") {
-        out.push(full.slice(WIKI_ROOT.length + 1));
+        out.push(full.slice(WIKI_ROOT_REAL.length + 1));
       }
     }
   }
-  await walk(join(WIKI_ROOT, "wiki"));
-  await walk(join(WIKI_ROOT, "raw"));
+  await walk(join(WIKI_ROOT_REAL, "wiki"));
+  await walk(join(WIKI_ROOT_REAL, "raw"));
   out.sort();
   return jsonResponse({ pages: out });
 }
@@ -508,17 +575,34 @@ const STATIC_TYPES: Record<string, string> = {
   ".json": "application/json",
 };
 
+const STATIC_SECURITY_HEADERS = {
+  "content-security-policy":
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
+  "referrer-policy": "no-referrer",
+  "x-content-type-options": "nosniff",
+  "x-frame-options": "DENY",
+};
+
+function staticHeaders(contentType: string): Record<string, string> {
+  return { ...STATIC_SECURITY_HEADERS, "content-type": contentType };
+}
+
 async function serveStatic(pathname: string): Promise<Response> {
   const rel = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
   const abs = resolve(DIST_DIR, rel);
   if (abs !== DIST_DIR && !abs.startsWith(DIST_DIR + sep)) {
-    return new Response("forbidden", { status: 403 });
+    return new Response("forbidden", {
+      status: 403,
+      headers: staticHeaders("text/plain; charset=utf-8"),
+    });
   }
   try {
     const info = await stat(abs);
     if (info.isFile()) {
       const file = Bun.file(abs);
-      return new Response(file, { headers: { "content-type": STATIC_TYPES[extname(abs)] ?? "application/octet-stream" } });
+      return new Response(file, {
+        headers: staticHeaders(STATIC_TYPES[extname(abs)] ?? "application/octet-stream"),
+      });
     }
   } catch {
     // fallthrough to SPA index
@@ -526,11 +610,11 @@ async function serveStatic(pathname: string): Promise<Response> {
   // SPA 回退:未命中静态文件时返回 index.html(前端路由)
   const index = Bun.file(join(DIST_DIR, "index.html"));
   if (await index.exists()) {
-    return new Response(index, { headers: { "content-type": "text/html; charset=utf-8" } });
+    return new Response(index, { headers: staticHeaders("text/html; charset=utf-8") });
   }
   return new Response("Cockpit 未构建。开发模式请用 `bun run dev:web`;或先 `bun run build`。", {
     status: 200,
-    headers: { "content-type": "text/plain; charset=utf-8" },
+    headers: staticHeaders("text/plain; charset=utf-8"),
   });
 }
 
@@ -552,6 +636,8 @@ try {
   async fetch(req) {
     const url = new URL(req.url);
     const { pathname } = url;
+    const blocked = requestGuard(req);
+    if (blocked) return blocked;
 
     if (pathname.startsWith("/api/")) {
       if (pathname === "/api/review" && req.method === "GET") return handleReview();
